@@ -252,6 +252,12 @@ typedef struct {
     uint64_t instructions;
     bool     trace;             /* print a trace line per instruction (interpreter) */
     void   (*trace_hook)(void);
+    /* called just before an instruction at hook_pc[] runs, by the interpreter and by the recompiled
+       code (the instructions recomp/symbols.txt marks "hook"); it may look at the machine, never change it */
+    void   (*hook)(uint16_t pc);
+    uint16_t hook_pc[2];
+    bool     sandbox;           /* cpu_sandbox_run is running: hardware writes are dropped, reads refused, no time passes */
+    bool     sandbox_fault;     /* the sandboxed code tried to read the hardware */
     bool     coverage;
     uint8_t *cov;               /* per (bank, offset) executed flag, prg_size bytes, plus RAM region */
     void    *debug_log;         /* FILE*: when set, mapper/PPU control writes are logged */
@@ -315,6 +321,7 @@ void    apu_flush_samples(void);   /* drop the samples not yet read (after a sta
 uint8_t mem_read_slow(uint16_t a);
 void    mem_write_slow(uint16_t a, uint8_t v);
 uint8_t nes_peek(uint16_t a);   /* side-effect-free read (RAM, PRG RAM, ROM; 0 for registers) for tools and achievements */
+void    mem_sandbox_begin(void);/* the sandbox's PPU data port (cpu_sandbox_run) takes the PPU's state; it then keeps its own across runs */
 
 /* cpu.c */
 void    cpu_power(void);
@@ -322,6 +329,14 @@ void    cpu_reset(void);
 void    cpu_step(void);          /* interpret one instruction (interrupts checked first) */
 void    cpu_take_interrupt(void);/* service a pending NMI/IRQ if any */
 int     cpu_interrupt_pending(void);
+/* Runs game code from regs->pc with private copies of RAM (sram) and work RAM (swram, 2 KiB each)
+   until the program counter reaches stop, leaving the machine as it was: writes to the PPU, APU,
+   controller port and mapper are dropped, a read of one of them ends the run (its value would
+   come from the machine) except the PPU's data port, which reads CHR ROM and the nametables through
+   a latch and CHR bank of the sandbox's own (mem.c); no time passes. sram, swram and regs hold the
+   result. Returns the number of instructions run, or -1 when the code read the hardware or did not
+   reach stop within max_insns. */
+int     cpu_sandbox_run(cpu_t *regs, uint16_t stop, uint8_t *sram, uint8_t *swram, int max_insns);
 
 /* sys.c */
 int     nes_load(const char *rom_path);

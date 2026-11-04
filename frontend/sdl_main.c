@@ -1395,6 +1395,7 @@ static int load_rom_file(const char *path) {
     }
     sys.use_recomp = native != 0;
     rom_ok = 1;
+    widescreen_attach();   /* the copies the widescreen view draws its objects and missing pages from, from the first frame */
     build_palette();
     set_rom_name(path);
     snprintf(state_dir, sizeof state_dir, "%ssaves", data_dir);

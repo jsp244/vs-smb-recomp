@@ -30,8 +30,8 @@ storage (org.vssmb.nativeport.touch for the phone app); the app finds it there b
 
 The picture fills the screen in the shape that matches it: 16:9 widescreen on a 1920x1080
 screen like the AYANEO Pocket EVO's, 4:3 on the Retroid Pocket Nova's 1280x960. During play
-the level the game keeps beyond the screen's edges fills the widescreen sides. Both can be
-changed on the Graphics tab.
+the level the game keeps beyond the screen's edges fills the widescreen sides, with the
+enemies in it. Both can be changed on the Graphics tab.
 
 The cabinet
 -----------

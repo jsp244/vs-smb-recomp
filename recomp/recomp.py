@@ -162,13 +162,14 @@ class Unit:
 
 
 class Recompiler:
-    def __init__(self, prg, prg_mode, max_routine, symbols, flat=False):
+    def __init__(self, prg, prg_mode, max_routine, symbols, flat=False, hooks=()):
         self.prg = prg
         self.flat = flat
         self.nbanks = 1 if flat else len(prg) // 0x2000
         self.prg_mode = prg_mode
         self.max_routine = max_routine
         self.symbols = symbols
+        self.hooks = set(hooks)    # instructions the runtime looks at before they run (HOOK in recomp_rt.h)
         self.units = {}            # (bank, base) -> Unit
         self.ext_refs = collections.defaultdict(set)  # slot base -> set of target addrs (swappable slots)
         self.ext_pending = collections.defaultdict(set)
@@ -463,7 +464,8 @@ class Recompiler:
         sym = self.symbols.get(a)
         hexb = " ".join(f"{b:02X}" for b in ins.raw)
         label = f" <{sym}>" if sym else ""
-        out.append(f"    case 0x{a:04X}: L_{a:04X}: INSN(0x{a:04X}); /* {hexb:<8} {ins.text()}{label} */")
+        hook = f" HOOK(0x{a:04X});" if a in self.hooks else ""
+        out.append(f"    case 0x{a:04X}: L_{a:04X}: INSN(0x{a:04X});{hook} /* {hexb:<8} {ins.text()}{label} */")
         body = []
         cyc = f"CYC({ins.cycles});"
         sync = f"SYNC(0x{nxt:04X});"
@@ -713,9 +715,10 @@ def mame_set_image(path):
 
 
 def load_symbols(path):
-    syms = {}
+    """ADDR name [hook] lines -> ({addr: name}, {addrs marked hook})"""
+    syms, hooks = {}, set()
     if not path or not os.path.exists(path):
-        return syms
+        return syms, hooks
     for line in open(path):
         line = line.split(";")[0].strip()
         if not line:
@@ -723,7 +726,9 @@ def load_symbols(path):
         parts = line.split()
         if len(parts) >= 2:
             syms[int(parts[0], 16)] = parts[1]
-    return syms
+            if "hook" in parts[2:]:
+                hooks.add(int(parts[0], 16))
+    return syms, hooks
 
 
 def main():
@@ -772,8 +777,8 @@ def main():
     else:
         prg_mode = int(args.prg_mode)
 
-    symbols = load_symbols(args.symbols)
-    rc = Recompiler(prg, prg_mode, args.max_routine, symbols, flat)
+    symbols, hooks = load_symbols(args.symbols)
+    rc = Recompiler(prg, prg_mode, args.max_routine, symbols, flat, hooks)
     fixed, swappable = rc.fixed_layout()
     bank_bases = {} if flat else infer_bases(prg, nbanks, set(fixed.values()), swappable, coverage)
     rc.analyse(coverage, bank_bases)
@@ -796,7 +801,7 @@ def main():
         print(f"  {u.name}: {len(u.insns):5d} instructions, {len(funcs):4d} routines (largest {biggest})")
     rc.units = {k: v for k, v in rc.units.items() if v.insns}
     rc.emit_main(args.out, sha1)
-    with open(os.path.join(args.out, ".gitignore"), "w") as f:
+    with open(os.path.join(args.out, ".gitignore"), "w", newline="\n") as f:
         f.write("*\n!.gitignore\n")
     layout = "flat 32 KiB" if flat else f"PRG mode {prg_mode}"
     print(f"{layout}; {len(rc.units)} units, {total_insns} instructions, {total_routines} routines")

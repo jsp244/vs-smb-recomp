@@ -5,6 +5,7 @@
 #ifndef WIDESCREEN_H
 #define WIDESCREEN_H
 #include <stdint.h>
+#include <stdbool.h>
 
 /* The widescreen canvas: the PPU's 256x240 picture with up to WS_BAND pixels of
    level on each side (the level is no taller than the screen, so no lines are
@@ -21,9 +22,26 @@
    rendered it into its two nametables, ahead of the screen and behind it, drawn
    with each line's own scroll (the status bar keeps its place); beyond what the
    game holds (before the start of the area, past its rendering frontier) and on
-   every screen that is not a level, the canvas is black.
+   every screen that is not a level, the canvas is black. With widescreen_sprites
+   the objects the game keeps beside the screen are drawn there too (and in the
+   sprite columns it hides at the screen's edges), by running the frame's engine
+   code again in the CPU sandbox with the camera moved.
    Returns 1 when the level was drawn beside the picture, 0 otherwise. */
 int widescreen_render(uint8_t *out, uint8_t *emph, int x, int y, int w, int h);
+
+/* Objects beside the picture, and the page before an area's start page when the area was entered
+   part-way (after a death at its halfway point, from a pipe); both on by default. Not machine state. */
+extern bool widescreen_sprites, widescreen_fill;
+
+/* Starts keeping the copy of RAM the objects are drawn from (a hook at the engine's first instruction)
+   when the loaded ROM is VS. Super Mario Bros.; widescreen_render calls it itself, calling it after a
+   ROM load makes the objects appear from the first frame. */
+void widescreen_attach(void);
+
+/* Self-check of the objects: runs the engine run whose sprites the PPU shows again, with the camera
+   where it was, and compares the sprites it builds with the PPU's. Returns 1 when identical, 0 when
+   they differ, -1 when there is no run to repeat (not in a level, or right after a state load). */
+int widescreen_sprite_check(void);
 
 /* Self-check: re-renders the centre 256x240 of the current frame from the
    nametables the way the bands are drawn and compares it with the PPU's frame

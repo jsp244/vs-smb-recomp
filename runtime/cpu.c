@@ -144,8 +144,9 @@ static inline void coverage_mark(uint16_t pc) {
 
 void cpu_step(void) {
     if (sys.trace_hook) sys.trace_hook();
+    if (sys.hook && (cpu.pc == sys.hook_pc[0] || cpu.pc == sys.hook_pc[1])) sys.hook(cpu.pc);
     sys.instructions++;
-    if (cpu.jammed) { cpu.cycles += 2; sys_sync(); return; }
+    if (cpu.jammed) { cpu.cycles += 2; if (!sys.sandbox) sys_sync(); return; }
     if (sys.cov) coverage_mark(cpu.pc);
 
     uint8_t op = fetch8();
@@ -417,5 +418,32 @@ void cpu_step(void) {
         cpu.jammed = 1; cpu.pc--; break;
     default: break;
     }
-    sys_sync();
+    if (!sys.sandbox) sys_sync();
+}
+
+int cpu_sandbox_run(cpu_t *regs, uint16_t stop, uint8_t *sram, uint8_t *swram, int max_insns) {
+    static uint8_t ram_save[2048], wram_save[2048];
+    cpu_t cpu_save = cpu;
+    sys_t sys_save = sys;
+    memcpy(ram_save, ram, sizeof ram);
+    memcpy(wram_save, cart.wram, sizeof wram_save);
+    memcpy(ram, sram, sizeof ram);
+    memcpy(cart.wram, swram, sizeof wram_save);
+    cpu = *regs;
+    sys.sandbox = true;
+    sys.sandbox_fault = false;
+    sys.hook = NULL;
+    sys.trace_hook = NULL;
+    sys.cov = NULL;
+    int n = 0;
+    while (cpu.pc != stop && n < max_insns && !sys.sandbox_fault && !cpu.jammed) { cpu_step(); n++; }
+    int ok = cpu.pc == stop && !sys.sandbox_fault && !cpu.jammed;
+    memcpy(sram, ram, sizeof ram);
+    memcpy(swram, cart.wram, sizeof wram_save);
+    memcpy(ram, ram_save, sizeof ram);
+    memcpy(cart.wram, wram_save, sizeof wram_save);
+    *regs = cpu;
+    cpu = cpu_save;
+    sys = sys_save;
+    return ok ? n : -1;
 }
