@@ -35,6 +35,8 @@ recomp/recomp.py     the static recompiler
 frontend/sdl_main.c  SDL2 player: menu, cabinet controls, scaling and shader passes, run-ahead, save slots, rewind
 frontend/ui.c        the tabbed menu (choices, numbers, key capture, text rows)
 frontend/rewind.c    rewind history: XOR deltas, run-length coded, in a byte ring
+frontend/updater.c   the Updates tab: GitHub's newest release, package checks, installing in place
+frontend/http.c      HTTPS GET for it: WinHTTP, libcurl loaded at run time, or Java on Android
 ```
 
 Options that are not machine state (`ppu_no_sprite_limit`, the DIP switches in
@@ -261,6 +263,16 @@ the screen, pad-first hints, LT + RT for the menu) and for Android (`android/`: 
 game as `libmain.so` under SDL's Java glue; the system document picker hands the
 chosen dump back as a drop event; the phone edition adds `touchpad.c`'s on-screen
 controller, whose buttons land in the same pad byte as a controller's).
+
+**Updates.** `updater.c` runs its check and installation on a worker thread and
+the menu polls its state. A build knows its version and repository from the
+Makefile (or `build_apk.py`); the check reads `releases/latest` with a small JSON
+scanner that only looks at the members it needs. Packages are unpacked in memory
+(zip on Windows, gzip + tar on Linux, with the deflate decoder of `romzip.c`), so
+no tool is started and only the program file is written. The swap is two renames
+under a lock that the main thread takes at exit, so quitting can never land between
+them. On Android the verified APK goes to a `PackageInstaller` session whose status
+comes back to `VSSMBActivity` and from there to `updater.c` over JNI.
 
 **Shaders.** `draw_game_ex` composes the picture into a render target when a
 shader or an internal resolution is active: game frame (nearest / linear / sharp

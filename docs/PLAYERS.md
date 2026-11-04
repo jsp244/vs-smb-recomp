@@ -50,6 +50,7 @@ Cabinet       The board's DIP switches:
               change applies at once, during a game at the next reset
               (Play > Reset game, or Ctrl+R).
 ROM           Choose or change the dump
+Updates       This program's version; check for a newer one and install it (below)
 
 Default keys
 ------------
@@ -86,11 +87,25 @@ soft glow), CRT curved (the same on a curved tube with a vignette and rounded
 corners) and Glow alone. Strength scales all of them. They cost nothing noticeable
 and input lag does not change.
 
+Updates
+-------
+The Updates tab shows this program's version. Check for updates asks GitHub for the
+newest release; the program goes online only when you press it. When there is a newer
+version, Update now downloads its package for your system, checks it against the
+SHA-256 checksums published with the release and puts the new program in place of
+this one. Your settings, saves and ROM stay as they are, and the previous version is
+kept beside it as vssmb.exe.old (vssmb.old on Linux): to go back, delete vssmb.exe and
+rename the .old file. Restart now starts the new version at once (a game in progress
+ends); otherwise it starts the next time you open the game. Nothing is installed until
+you press Update now. The program's folder has to be writable for this; if it is not
+(Program Files, for example), download the new version from the release page.
+
 Files
 -----
 saves/<rom name>.state1-9  save state slots (F5 / F8, F6 / F7 to pick one)
 screenshots/               F12 screenshots
 vssmb.ini                  settings and the remembered ROM path
+vssmb.exe.old              the previous version, after an update (vssmb.old on Linux)
 
 These live next to the program when that folder is writable. If it is not (Program
 Files, a read-only location, or the program was started from inside the zip),

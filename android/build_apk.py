@@ -124,7 +124,8 @@ def build_native(t, sdl, abi):
     run([t["cmake"], "-S", cm(HERE), "-B", cm(out), "-G", "Ninja", "-DCMAKE_MAKE_PROGRAM=" + cm(t["ninja"]),
          "-DCMAKE_TOOLCHAIN_FILE=" + cm(os.path.join(t["ndk"], "build", "cmake", "android.toolchain.cmake")),
          "-DANDROID_ABI=" + abi, "-DANDROID_PLATFORM=android-%d" % MIN_SDK, "-DCMAKE_BUILD_TYPE=Release",
-         "-DCMAKE_POLICY_VERSION_MINIMUM=3.5", "-DSDL2_SOURCE_DIR=" + cm(sdl)])
+         "-DCMAKE_POLICY_VERSION_MINIMUM=3.5", "-DSDL2_SOURCE_DIR=" + cm(sdl),
+         "-DVSSMB_VERSION=" + version()[1], "-DVSSMB_REPO=" + repository()])
     run([t["cmake"], "--build", out])
     libs = {}
     for name in ("libSDL2.so", "libmain.so"):
@@ -171,13 +172,37 @@ def build_icons():
     return res
 
 
+def git(*args):
+    return subprocess.check_output(["git"] + list(args), cwd=ROOT, text=True, stderr=subprocess.DEVNULL).strip()
+
+
 def version():
+    """(versionCode, versionName): the number of commits, and git describe (the newest v* tag, plus the
+    commits after it), as the Makefile gives the desktop builds; VSSMB_VERSION in the environment
+    sets the name instead"""
     try:
-        count = int(subprocess.check_output(["git", "rev-list", "--count", "HEAD"], cwd=ROOT, text=True).strip())
-        short = subprocess.check_output(["git", "rev-parse", "--short", "HEAD"], cwd=ROOT, text=True).strip()
+        count = int(git("rev-list", "--count", "HEAD"))
     except (OSError, subprocess.CalledProcessError, ValueError):
-        count, short = 1, "local"
-    return count, "1.0.%d-%s" % (count, short)
+        count = 1
+    name = os.environ.get("VSSMB_VERSION")
+    if not name:
+        try:
+            name = git("describe", "--tags", "--match", "v[0-9]*", "--dirty")
+        except (OSError, subprocess.CalledProcessError):
+            name = "dev"
+    return count, name[1:] if name[0] in "vV" and name[1:2].isdigit() else name
+
+
+def repository():
+    """owner/name of the GitHub repository whose releases the Updates tab checks: VSSMB_REPO in the
+    environment, else the one this checkout came from (its origin remote), else "" """
+    if "VSSMB_REPO" in os.environ:
+        return os.environ["VSSMB_REPO"]
+    try:
+        m = re.search(r"github\.com[:/]+([^/]+/[^/]+?)(\.git)?$", git("remote", "get-url", "origin"))
+    except (OSError, subprocess.CalledProcessError):
+        return ""
+    return m.group(1) if m else ""
 
 
 def edition_manifest(edition):

@@ -24,7 +24,7 @@ your dump again, at run time, for the graphics, the level data (kept in CHR ROM 
 
 `make dist` packages a single executable (SDL2 linked statically, no DLLs) with a
 launcher in the style of the N64 recompilation projects: a tabbed menu
-(**Play / Graphics / Audio / Controls / Cabinet / ROM**) over the game's own title
+(**Play / Graphics / Audio / Controls / Cabinet / ROM / Updates**) over the game's own title
 screen and demo, running with sound behind it. On the ROM tab "Choose ROM file..."
 opens the system file dialog; dropping the file onto the window or passing it on the
 command line also works. Both an iNES `.nes` file and **MAME's `suprmrio.zip` set**
@@ -55,7 +55,8 @@ window size 1x-6x, scaling (integer / fit / stretch), aspect ratio (square pixel
 4:3 CRT, 16:9 or 16:10 widescreen: below), colours (arcade / NES), filter (nearest /
 linear / sharp), CRT-style
 shaders (scanlines, aperture mask, glow, curvature; three strengths), overscan crop,
-a no-sprite-limit mode (no flicker), volume, and rebinding of every button. Nine save
+a no-sprite-limit mode (no flicker), volume, and rebinding of every button. Updates
+from the GitHub releases (the Updates tab, below), nine save
 state slots and rewind (hold a key to step back through the last minutes of play)
 are built in. There are no RetroAchievements: no set exists for this game. Esc in
 game opens the same menu as a pause screen.
@@ -142,18 +143,24 @@ build/vssmb            # looks for rom/*.nes or *.zip next to the executable; or
 `make recomp` prints how many instructions and routines it found (12,156 instructions
 in 261 routines from static analysis alone: the recursive descent follows the game's
 jump tables, see `recomp/symbols.txt`). `make dist` zips the executable with the
-player notes (`docs/PLAYERS.md`) into `dist/`.
+player notes (`docs/PLAYERS.md`) into `dist/`. A build carries its version (`git
+describe`: the newest `v*` tag, plus the commits after it) and the GitHub repository of
+the checkout (its `origin` remote), which the Updates tab compares and downloads from;
+`make VSSMB_VERSION=v1.2.0 VSSMB_REPO=owner/name` sets them where there is no git.
 
 ### Linux and Steam Deck packages
 
 `tools/linux/Dockerfile` is an Ubuntu 22.04 build environment with SDL2 built from
 source as a static library that loads X11, Wayland, PipeWire, PulseAudio, ALSA and
 udev at run time. The resulting binary needs only glibc 2.34+ and libm, so it runs on
-SteamOS 3 and current distributions without installing anything. After `make recomp`:
+SteamOS 3 and current distributions without installing anything; libcurl (for the
+Updates tab) is loaded at run time when present. After `make recomp` (the container has
+no git, so the version and repository come in from the environment):
 
 ```
 docker build -t vssmb-linux tools/linux
-docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp -v "$PWD":/src -w /src vssmb-linux sh tools/linux/build.sh
+export VSSMB_VERSION="$(git describe --tags --match 'v[0-9]*' --dirty)" VSSMB_REPO=owner/name
+docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp -e VSSMB_VERSION -e VSSMB_REPO -v "$PWD":/src -w /src vssmb-linux sh tools/linux/build.sh
 ```
 
 This builds, runs the cosimulation and the frontend self-tests headless (SDL's
@@ -173,10 +180,13 @@ controller (`frontend/touchpad.c`: d-pad, B, A, COIN, START, MENU) under its own
 ("VS. Super Mario Bros. Touch"). They hold SDL2's Java glue and native library from the
 SDL source (fetched once), the game as `libmain.so` for arm64-v8a and x86_64 (NDK +
 CMake), a small activity for the system file picker, and launcher icons drawn from the
-port's own artwork; the phone edition differs only in its manifest. The app has no
-internet permission. It needs a platform 34+, build-tools, an NDK and CMake from the SDK
-manager, plus a JDK; both APKs are signed with a key kept in
-`~/.android/vssmb-release.keystore` (created on first use).
+port's own artwork; the phone edition differs only in its manifest. The app goes online
+only for the Updates tab (its internet permission), and it may ask Android to install an
+update of itself (the install-packages permission). It needs a platform 34+, build-tools,
+an NDK and CMake from the SDK manager, plus a JDK; both APKs are signed with a key kept in
+`~/.android/vssmb-release.keystore` (created on first use; keep it, an installed app can
+only be updated with the same key). versionName is `git describe` (or `VSSMB_VERSION`),
+versionCode the number of commits.
 
 ```
 python android/build_apk.py                           # after make recomp
@@ -185,6 +195,36 @@ python android/build_apk.py --edition phone --install # one of them, and adb ins
 
 Player notes for handhelds and phones: `docs/ANDROID.md`; device test tools (a virtual
 controller for adb, frame-timing summary): `tools/android/`.
+
+### Updates
+
+**Check for updates** on the Updates tab asks the GitHub API for the newest release of
+the repository the build came from (`releases/latest`: drafts and pre-releases are never
+offered; nothing is contacted until the button is pressed) and compares its tag with the
+build's version. **Update now** then downloads that release's package for the system,
+over HTTPS only and only from the release's own downloads, and checks it: it must have the
+size GitHub lists and the SHA-256 the release publishes for it (the digest GitHub keeps for
+every uploaded file, and the release's `SHA256SUMS` file; where a release has both, both
+must match, and a package without either is not installed). Then:
+
+* **Windows**: the program is taken out of the zip in memory and written beside the
+  running one as `vssmb.exe.new`; the running program is renamed to `vssmb.exe.old`
+  (Windows allows renaming a running executable) and the new one takes its name.
+* **Linux and the Steam Deck**: the same from the tar.gz; the running program keeps a
+  second name, `vssmb.old`, and the new file is renamed over `vssmb`, which replaces it
+  in one step.
+* **Android**: the APK of the app's edition goes to the system's package installer
+  (a `PackageInstaller` session), which asks the player to confirm (the first time, it
+  also asks to allow this app to install updates); Android then closes the game and
+  installs the update over it, keeping its data, and the player opens it again.
+
+Settings, saves and the ROM are never touched. **Restart now** (Windows, Linux) shuts down
+as Quit does and starts the new version; on Linux it takes over the same process, so on
+a Steam Deck the game session carries on. `vssmb --update-check` prints what a check finds.
+
+A release is a `v*` tag with the five packages attached (`make dist`,
+`tools/linux/build.sh`, `android/build_apk.py`, built from that tag so they carry its
+version) and their checksums as `SHA256SUMS` (`sha256sum vssmb-* > SHA256SUMS`).
 
 ### Controls
 
@@ -239,7 +279,8 @@ Save states go to `saves/<rom name>.state1` .. `.state9`.
   `$4020`), the RP2C04 palettes, and a 6502 interpreter that doubles as the fallback
   for untranslated code and as the reference model.
 * `frontend/sdl_main.c` is the player: window, audio, input and the cabinet's
-  controls, saves, states, rewind, shaders.
+  controls, saves, states, rewind, shaders; `frontend/updater.c` is the Updates tab,
+  over `frontend/http.c` (WinHTTP, libcurl loaded at run time, or Java on Android).
 
 Details are in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
@@ -253,9 +294,15 @@ make headless-recomp               # harness with the recompiled code linked in
 python tests/cosim.py              # interpreter vs native, a 9,000-frame coin-op session
 python tests/cosim.py --levels     # interpreter vs native in every world (about 3.5 minutes)
 sh tests/run_ui_bind_test.sh       # menu rebinding and text rows (synthetic events)
+sh tests/run_updater_test.sh       # the updater offline: checksums, packages, every refusal
 build/vssmb rom/*.nes --rewind-test 1200   # whole rewind path: every re-run frame must match
 build/vssmb rom/*.nes --chord-test         # the Start + Select rollback
+build/vssmb --update-check                 # what the Updates tab's check finds (online)
 ```
+
+`vssmb --update-test VERSION [args...]` runs the whole update in the program's own
+folder as if the build were that older version, then starts the installed program with
+`args` (use it on a copy in a scratch folder).
 
 The headless harness (`build/nes-headless --help`) scripts input
 (`--keys "300:COIN;304:-;400:SELECT"`; `2A`, `2SELECT` ... for the second controller),
@@ -268,7 +315,7 @@ coverage (`--coverage FILE`), traces every instruction and dumps RAM.
 ```
 recomp/        the static recompiler (Python) and symbols.txt (address labels, no game data)
 runtime/       hardware runtime + headless harness (C11), the MAME zip reader
-frontend/      SDL2 player (menu, video, audio, input, touch controls, rewind)
+frontend/      SDL2 player (menu, video, audio, input, touch controls, rewind, updates)
 android/       Android app: CMake project, manifest, activity, build_apk.py
 tests/         accuracy tests, cosimulation, nestest comparison, module tests
 tools/         icon generator, Linux / Steam Deck build container (tools/linux), Steam

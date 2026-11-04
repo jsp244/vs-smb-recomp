@@ -18,7 +18,22 @@ Bros. board (a .nes file, or MAME's suprmrio.zip).
 Install
 -------
 Copy the APK to the device and open it (allow installing from that app when Android asks),
-or from a PC: `adb install vssmb-android-handheld.apk` (or -phone.apk).
+or from a PC: `adb install vssmb-android-handheld.apk` (or -phone.apk). Later versions
+install from the app itself (Updates, below).
+
+Updates
+-------
+The menu's Updates tab shows the app's version. Check for updates asks GitHub for the
+newest release; the app goes online only when you press it. When there is a newer
+version, Update now downloads the APK of your edition (handheld or phone) and checks it
+against the SHA-256 checksums published with the release. Then Android takes over:
+- The first time, Android asks you to allow this app to install apps: it opens the
+  "Install unknown apps" page for VS. Super Mario Bros.; switch it on, come back, and
+  press Update now again.
+- Android asks whether to update the app. After you confirm, it closes the game and
+  installs the update over it. Open the game again afterwards: your saves, settings and
+  ROM are kept.
+Nothing is downloaded or installed until you press Update now and confirm.
 
 First start
 -----------
@@ -64,7 +79,9 @@ Notes
 -----
 - Save states (9 slots) and settings live in the app's private storage; Android's app
   backup includes them. Uninstalling the app deletes them.
-- The app never goes online (it has no internet permission).
+- The app goes online only when you press Check for updates or Update now (GitHub, over
+  HTTPS); that is what its internet permission is for, and its permission to install apps
+  is only ever used to hand Android an update of itself.
 - A log of the last run is written to Android/data/org.vssmb.nativeport/files/
   vssmb-log.txt (.touch for the phone app; handy with `adb pull` when something goes
   wrong).

@@ -164,6 +164,9 @@ static int inflate_raw(const uint8_t *in, size_t in_len, uint8_t *out, size_t ou
     return s.out_pos == s.out_len;
 }
 
+int romzip_inflate(const uint8_t *in, size_t in_len, uint8_t *out, size_t out_len) { return inflate_raw(in, in_len, out, out_len); }
+uint32_t romzip_crc32(const uint8_t *data, size_t len) { return crc32_of(data, len); }
+
 /* ---- zip directory ---- */
 int romzip_is_zip(const uint8_t *data, size_t len) {
     return len >= 4 && data[0] == 'P' && data[1] == 'K' && data[2] == 3 && data[3] == 4;

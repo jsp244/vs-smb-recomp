@@ -61,8 +61,37 @@ ifeq ($(DECK_EDITION),1)
   PLATFORM := steamdeck
 endif
 
-FRONTEND_SRC := frontend/sdl_main.c frontend/font.c frontend/ui.c frontend/filedialog.c frontend/audio_out.c frontend/input.c frontend/gpu_sync.c frontend/icon_data.c frontend/rewind.c frontend/touchpad.c
+FRONTEND_SRC := frontend/sdl_main.c frontend/font.c frontend/ui.c frontend/filedialog.c frontend/audio_out.c frontend/input.c frontend/gpu_sync.c frontend/icon_data.c frontend/rewind.c frontend/touchpad.c \
+                frontend/http.c frontend/updater.c
 FRONTEND_OBJ := $(patsubst frontend/%.c,$(BUILD)/fe_%.o,$(FRONTEND_SRC))
+
+# ---- HTTPS for the Updates tab (frontend/http.c): WinHTTP on Windows; elsewhere libcurl, whose
+#      headers are needed to build while the library itself is loaded at run time, so the program
+#      also starts on systems without it (the Updates tab then says so)
+ifeq ($(WINDOWS),1)
+  HTTP_LIBS := -lwinhttp
+else ifneq ($(shell pkg-config --exists libcurl 2>/dev/null && echo yes),)
+  HTTP_CFLAGS := -DHTTP_CURL_DLOPEN $(shell pkg-config --cflags libcurl)
+  HTTP_LIBS := -ldl -lpthread
+endif
+
+# ---- the Updates tab (frontend/updater.c): this build's version (git describe: the newest v* tag,
+#      plus the commits after it), the GitHub repository whose releases it checks (from the git
+#      remote) and its package there (the name `make dist` gives it). Builds without git, such as
+#      the container of tools/linux/build.sh, take VSSMB_VERSION and VSSMB_REPO from the
+#      environment. A stamp file rebuilds updater.c when they change.
+ifeq ($(origin VSSMB_VERSION),undefined)
+  VSSMB_VERSION := $(or $(shell git describe --tags --match "v[0-9]*" --dirty 2>/dev/null),dev)
+endif
+ifeq ($(origin VSSMB_REPO),undefined)
+  VSSMB_REPO := $(shell git remote get-url origin 2>/dev/null | sed -n -E 's|^.*github\.com[:/]+([^/]+/[^/]+)$$|\1|p' | sed 's|\.git$$||')
+endif
+UPDATE_DEFS := -DVSSMB_VERSION=\"$(VSSMB_VERSION)\" -DVSSMB_REPO=\"$(VSSMB_REPO)\" \
+               -DVSSMB_PACKAGE=\"vssmb-$(PLATFORM).$(if $(filter zip,$(ARCHIVE)),zip,tar.gz)\"
+ifneq ($(UPDATE_DEFS),$(file <$(BUILD)/updater-defs.txt))
+  $(shell mkdir -p $(BUILD))
+  $(file >$(BUILD)/updater-defs.txt,$(UPDATE_DEFS))
+endif
 ifeq ($(WINDOWS),1)
   # executable icon + version info (Explorer, taskbar)
   WINDRES ?= windres
@@ -106,11 +135,14 @@ vssmb: $(BUILD)/vssmb$(EXE)
 
 $(BUILD)/vssmb$(EXE): $(RUNTIME_OBJ) $(FRONTEND_OBJ) $(GEN_OBJ)
 	@test -n "$(GEN_SRC)" || (echo "no generated code: run 'make recomp' first" && exit 1)
-	$(CC) $(CFLAGS) $^ -o $@ $(SDL_LIBS) $(LDFLAGS) -lm
+	$(CC) $(CFLAGS) $^ -o $@ $(SDL_LIBS) $(HTTP_LIBS) $(LDFLAGS) -lm
 
-$(BUILD)/fe_%.o: frontend/%.c runtime/nes.h runtime/palette.h runtime/widescreen.h frontend/font.h frontend/ui.h frontend/filedialog.h frontend/audio_out.h frontend/input.h frontend/gpu_sync.h frontend/rewind.h frontend/touchpad.h
+$(BUILD)/fe_%.o: frontend/%.c runtime/nes.h runtime/palette.h runtime/widescreen.h runtime/romzip.h frontend/font.h frontend/ui.h frontend/filedialog.h frontend/audio_out.h frontend/input.h frontend/gpu_sync.h frontend/rewind.h frontend/touchpad.h frontend/http.h frontend/updater.h
 	@mkdir -p $(BUILD)
-	$(CC) $(CFLAGS) $(SDL_CFLAGS) -Iruntime -c $< -o $@
+	$(CC) $(CFLAGS) $(SDL_CFLAGS) $(HTTP_CFLAGS) -Iruntime -c $< -o $@
+
+$(BUILD)/fe_updater.o: CFLAGS += $(UPDATE_DEFS)
+$(BUILD)/fe_updater.o: $(BUILD)/updater-defs.txt
 
 $(BUILD)/fe_resources.o: frontend/vssmb.rc frontend/vssmb.ico
 	@mkdir -p $(BUILD)

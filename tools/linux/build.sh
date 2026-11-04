@@ -1,15 +1,19 @@
 #!/bin/sh
 # tools/linux/build.sh - builds and tests the Linux and Steam Deck packages. Run it inside the
-# container made from tools/linux/Dockerfile (see there). Needs generated/ (make recomp);
-# the tests also need your dump (.nes or MAME's suprmrio.zip) in rom/.
+# container made from tools/linux/Dockerfile (see there; it also says how to give the builds
+# their version). Needs generated/ (make recomp); the tests also need your dump (.nes or MAME's
+# suprmrio.zip) in rom/.
 set -e
 cd "$(dirname "$0")/../.."
 J=$(nproc)
 M="make -j$J PYTHON=python3 SDL_STATIC=1"
 
+echo "== version ${VSSMB_VERSION:-dev}, repository ${VSSMB_REPO:-(none)}"
 $M headless headless-recomp
 $M BUILD=build-linux vssmb
 $M BUILD=build-deck DECK_EDITION=1 vssmb
+echo "== the updater's offline test"
+SDL_LIBS="$(sdl2-config --static-libs)" sh tests/run_updater_test.sh | tail -n 1
 
 ROM=$(ls rom/*.nes rom/*.zip 2>/dev/null | head -n 1 || true)
 if [ -n "$ROM" ]; then
@@ -26,6 +30,7 @@ if [ -n "$ROM" ]; then
         ./$b/vssmb "$ROM" --rewind-test 1200 | grep rewind-test
         ./$b/vssmb "$ROM" --ui-shot "/tmp/ui-$b.png" 1 60 | grep ui-shot
         grep -E "^(display_mode|aspect|scaling|resolution)=" $b/vssmb.ini | tr '\n' ' '; echo
+        ./$b/vssmb --update-check | tail -n 2 || true   # the Updates tab's check (needs the network)
     done
 fi
 

@@ -10,8 +10,13 @@
     <uses-feature android:name="android.hardware.usb.host" android:required="false" />
     <uses-feature android:name="android.hardware.bluetooth" android:required="false" />
 
-    <!-- rumble on controllers that have it; the app never goes online -->
+    <!-- rumble on controllers that have it -->
     <uses-permission android:name="android.permission.VIBRATE" />
+    <!-- the menu's Updates tab: the app goes online only when the player presses Check for updates
+         or Update now (GitHub), and an update is installed by the system's package installer,
+         which asks the player to confirm it -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
     <application
         android:label="VS. Super Mario Bros."
