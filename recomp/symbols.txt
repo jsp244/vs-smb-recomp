@@ -1,0 +1,7 @@
+; Address labels for VS. Super Mario Bros. Format: ADDR name. Lines starting with ; are ignored.
+; A label starting with JumpEngine marks a routine that jumps through the word table after its JSR.
+; These are annotations written for this project; they contain no game data.
+8000 reset
+810A nmi
+81FE irq
+90BB JumpEngine

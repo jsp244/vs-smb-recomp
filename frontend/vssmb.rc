@@ -1,0 +1,29 @@
+// Windows resources: the executable's icon (shown by Explorer and the taskbar)
+// and version information. The icon is original artwork from tools/make_icon.py.
+#include <windows.h>
+
+1 ICON "vssmb.ico"
+
+1 VERSIONINFO
+FILEVERSION     0,1,0,0
+PRODUCTVERSION  0,1,0,0
+FILEOS          VOS_NT_WINDOWS32
+FILETYPE        VFT_APP
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904B0"
+        BEGIN
+            VALUE "FileDescription", "VS. Super Mario Bros. native port"
+            VALUE "ProductName",     "VS. Super Mario Bros. native port"
+            VALUE "FileVersion",     "0.1.0"
+            VALUE "ProductVersion",  "0.1.0"
+            VALUE "OriginalFilename", "vssmb.exe"
+            VALUE "LegalCopyright",  "Port tooling MIT licensed. Super Mario Bros. is a trademark of Nintendo; no game data is included."
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x409, 1200
+    END
+END

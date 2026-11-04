@@ -1,0 +1,19 @@
+# Keep line endings consistent across Windows/MSYS2 and Linux checkouts.
+* text=auto
+Makefile text eol=lf
+*.sh text eol=lf
+*.py text eol=lf
+*.c text eol=lf
+*.h text eol=lf
+*.md text eol=lf
+*.mk text eol=lf
+Dockerfile text eol=lf
+CMakeLists.txt text eol=lf
+*.java text eol=lf
+*.xml text eol=lf
+*.nes binary
+*.sav binary
+*.state binary
+*.png binary
+*.zip binary
+*.ico binary

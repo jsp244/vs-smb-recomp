@@ -1,0 +1,29 @@
+# Your own cartridge dump goes here; it is never committed.
+rom/*
+!rom/README.md
+
+# Everything derived from the ROM (recompiled C, listings) is generated locally.
+generated/*
+!generated/.gitignore
+
+# Build output, packages (they contain the recompiled game) and saves
+build/
+build-*/
+dist/
+saves/
+screenshots/
+*.sav
+*.state
+*.o
+*.exe
+
+# External test ROMs (cloned by tests/get_test_roms.sh)
+tests/external/
+
+# Python bytecode
+__pycache__/
+
+# Editor / OS noise
+*.swp
+.DS_Store
+Thumbs.db
