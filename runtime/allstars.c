@@ -87,6 +87,9 @@ static struct {
 #define OAM_BUFFER       0x0800     /* where All-Stars builds its OAM (544 bytes) */
 #define MAP16_LO         0x039438   /* low bytes of the four metatile groups' tables (bank $03) */
 #define MAP16_HI         0x03943C
+#define AS_USED_BLOCK    0x03BEC6   /* PlayerHeadCollision: LDY #used block */
+#define AS_BUMP_PLACE    0x03BED1   /* ... LDA #metatile / STA ($06),y: the place of a bouncing block */
+#define AS_VINE_CELL     0x03BA99   /* the vine: LDA #metatile / STA ($06),y, the cells it climbs */
 #define AREA_TYPE_OFS    0x04C190   /* first area index of each area type */
 #define AREA_PTR_LO      0x04C194   /* area data pointers by area index (bank $04) */
 #define AREA_PTR_HI      0x04C1B6
@@ -592,7 +595,9 @@ static void map_metatiles(void) {
         vs_ptr[g] = (uint16_t)(cart.prg[VS_METATILE_LO - 0x8000 + g] | (cart.prg[VS_METATILE_LO + 4 - 0x8000 + g] << 8));
     for (int g = 0; g < 4; g++) {
         vs_count[g] = g < 3 ? (vs_ptr[g + 1] - vs_ptr[g]) / 4 : 6;
-        sm_count[g] = g < 3 ? (int)((map16_addr((uint8_t)((g + 1) << 6)) - map16_addr((uint8_t)(g << 6))) / 8) : 24;
+        /* group 3's table is the last one: its 64 entries (All-Stars' ? blocks, coins, used block and axe
+           are at $E7-$FD, after its own additions) */
+        sm_count[g] = g < 3 ? (int)((map16_addr((uint8_t)((g + 1) << 6)) - map16_addr((uint8_t)(g << 6))) / 8) : 64;
     }
     for (int m = 0; m < 256; m++) mt_static[m] = (uint8_t)m;
     for (int g = 0; g < 4; g++) {
@@ -619,6 +624,14 @@ static void map_metatiles(void) {
             else j--;
         }
     }
+    /* the ones VS. writes during play as All-Stars' own code writes them: PlayerHeadCollision's place of
+       a bouncing block (VS. $23; LDA #$27 / STA ($06),y) and the used block (VS. $C4; LDY #$FC), the
+       vine's climbing cells (VS. $26; LDA #$2A / STA ($06),y) */
+    static const struct { uint8_t vs, opcode; uint32_t at; } play[] = {
+        { 0x23, 0xA9, AS_BUMP_PLACE }, { 0xC4, 0xA0, AS_USED_BLOCK }, { 0x26, 0xA9, AS_VINE_CELL },
+    };
+    for (size_t i = 0; i < sizeof play / sizeof play[0]; i++)
+        if (rom8(play[i].at) == play[i].opcode) mt_static[play[i].vs] = rom8(play[i].at + 1);
 }
 
 /* ---- the area being shown ---- */
@@ -644,17 +657,40 @@ static int last_world = -1;   /* the area's column All-Stars' parser did last */
 
 #define AREA_DATA_COPY 0x7FE000u   /* where VS.'s converted area data goes in the sandbox */
 
-/* The area header's settings as VS.'s InitializeArea left them, kept at the parser's first column after
-   it: the parser changes them as it meets objects (the terrain, the scenery), so a rebuild later in the
-   area must not take them from the RAM of that moment */
+/* The area header's settings as the area starts. The parser changes them as it meets objects (the
+   terrain, the scenery), so a rebuild later in the area cannot take them from the RAM of that moment;
+   they come from the header itself: VS.'s GetAreaDataAddrs ($AC0E) copies the area's data to PRG RAM
+   (at $6200), where it stays, and decodes its two header bytes as below. SecondaryHardMode ($06CC)
+   is set by world and level. */
 static const uint16_t header_vars[] = { 0x0744, 0x0742, 0x0733, 0x0743, 0x0727, 0x0710, 0x0715, 0x0741, 0x06CC };
 #define N_HEADER_VARS (sizeof header_vars / sizeof header_vars[0])
-static struct { bool ok; uint8_t id[5], v[N_HEADER_VARS]; } header;
 
-static void keep_header(void) {
-    header.ok = true;
-    for (int i = 0; i < 5; i++) header.id[i] = ram[area_id_addr[i]];
-    for (size_t i = 0; i < N_HEADER_VARS; i++) header.v[i] = ram[header_vars[i]];
+/* The page VS.'s parser began the area it is in on (InitializeArea's start: the halfway page after a
+   death, the entrance page after a pipe), seen at its first column; the halfway page is cleared later,
+   so a rebuild cannot find it in the RAM of that moment. Forgotten after a state load (the start is then
+   InitializeArea's from that RAM). */
+static struct { bool ok; uint8_t id[5], page; } area_start;
+
+static int start_page(const uint8_t *r) {
+    if (!area_start.ok) return -1;
+    for (int i = 0; i < 5; i++) if (area_start.id[i] != r[area_id_addr[i]]) return -1;
+    return area_start.page;
+}
+
+static void area_header(const uint8_t *r, uint8_t v[N_HEADER_VARS]) {
+    uint16_t at = (uint16_t)((r[0xE7] | (r[0xE8] << 8)) - 2);   /* the data pointer is past the header */
+    uint8_t h0 = 0, h1 = 0;
+    if (at >= 0x6000 && at < 0x67FF) { h0 = cart.wram[at - 0x6000]; h1 = cart.wram[at + 1 - 0x6000]; }
+    uint8_t fg = h0 & 7, style = h1 >> 6;
+    v[0] = fg >= 4 ? fg : 0;          /* BackgroundColorCtrl */
+    v[1] = (h1 >> 4) & 3;             /* BackgroundScenery */
+    v[2] = style == 3 ? 0 : style;    /* AreaStyle */
+    v[3] = style == 3 ? 3 : 0;        /* CloudTypeOverride */
+    v[4] = h1 & 15;                   /* TerrainControl */
+    v[5] = (h0 >> 3) & 7;             /* PlayerEntranceCtrl */
+    v[6] = h0 >> 6;                   /* GameTimerSetting */
+    v[7] = fg >= 4 ? 0 : fg;          /* ForegroundScenery */
+    v[8] = r[0x06CC];
 }
 
 static void build_area(const uint8_t *r) {
@@ -673,12 +709,15 @@ static void build_area(const uint8_t *r) {
     w[RAM_WORLD] = r[RAM_WORLD]; w[RAM_LEVEL] = r[RAM_LEVEL]; w[RAM_AREA_NUM] = r[RAM_AREA_NUM];
     w[0x0753] = r[0x0753]; w[0x0756] = r[0x0756];
     w[0x075B] = r[0x075B]; w[0x0752] = r[0x0752]; w[0x0751] = r[0x0751];
+    int sp = start_page(r);
+    if (sp >= 0) { w[0x075B] = (uint8_t)sp; w[0x0752] = 0; }   /* HalfwayPage, not AltEntranceControl */
     w[0x076A] = r[0x076A];
     w[0x0770] = 1; w[0x0772] = 0;
     sb_call(sb, INIT_AREA, 1, 400000);
     /* the area's header and objects are VS.'s */
-    bool kept = header.ok && !memcmp(header.id, area.id, sizeof header.id);
-    for (size_t i = 0; i < N_HEADER_VARS; i++) w[header_vars[i]] = kept ? header.v[i] : r[header_vars[i]];
+    uint8_t hv[N_HEADER_VARS];
+    area_header(r, hv);
+    for (size_t i = 0; i < N_HEADER_VARS; i++) w[header_vars[i]] = hv[i];
     static uint8_t raw[1024], conv[1536];
     uint16_t src = (uint16_t)(r[0xE7] | (r[0xE8] << 8));   /* VS.'s area data pointer (past the header) */
     int n = 0;
@@ -740,7 +779,11 @@ static void parser_column(void) {
     if (area.pending || !area.ready || !same_area()) {
         /* a new area, or not the one built: replayed from its start at the next picture (VS. does not
            always parse an area from its first column: its demo goes on from the title's screen) */
-        if (area.pending) keep_header();
+        if (area.pending) {
+            area_start.ok = true;
+            for (int i = 0; i < 5; i++) area_start.id[i] = ram[area_id_addr[i]];
+            area_start.page = ram[RAM_PAGE];
+        }
         area.pending = false;
         area.resync = true;
         return;
@@ -791,11 +834,24 @@ static void resync(void) {
     int target = ram[RAM_PAGE] * 16 + (ram[RAM_COLUMN] & 15);
     memcpy(sram, ram, sizeof sram);
     memcpy(swram, cart.wram, sizeof swram);
+    int sp = start_page(ram);
+    if (sp >= 0) { sram[0x075B] = (uint8_t)sp; sram[0x0752] = 0; }   /* where the area began */
     cpu_t r = cpu;
     r.sp = 0xF0;
     mem_sandbox_begin();
     if (vs_call(&r, sram, swram, VS_AREA_INIT, 200000) != 0) return;
-    build_area(ram);   /* from VS.'s RAM: the area ids, its data pointer; the header as kept at its start */
+    /* InitializeArea finds the area from AreaPointer, which the title screen leaves stale (it shows 1-1
+       with another area's pointer, so the sandbox would load that area): the area itself comes from VS.'s
+       RAM, as for All-Stars' side: its data in PRG RAM, the data pointers, the area type, and the
+       header's settings */
+    memcpy(swram, cart.wram, sizeof swram);
+    for (uint16_t a = 0xE7; a <= 0xEA; a++) sram[a] = ram[a];
+    sram[RAM_AREA_TYPE] = ram[RAM_AREA_TYPE];
+    sram[RAM_AREA_PTR] = ram[RAM_AREA_PTR];
+    uint8_t hv[N_HEADER_VARS];
+    area_header(ram, hv);
+    for (size_t i = 0; i < N_HEADER_VARS; i++) sram[header_vars[i]] = hv[i];
+    build_area(ram);   /* from VS.'s RAM: the area ids, its data pointer and header */
     if (!area.ready) return;
     int col = sram[RAM_PAGE] * 16 + (sram[RAM_COLUMN] & 15);
     for (int n = 0; col < target && n < 512; n++, col++) {
@@ -825,12 +881,14 @@ void allstars_hook(uint16_t pc) {
 
 void allstars_reset(void) {
     area.resync = true;
+    area_start.ok = false;
 }
 
 static void map_sprite_palettes(void);
 
 void allstars_attach(void) {
     area.ready = false; area.pending = false; area.last_col = -1; area.resync = true;   /* built at the next picture */
+    area_start.ok = false;
     memset(mt_seen_ok, 0, sizeof mt_seen_ok);
     if (as.rom && cart.prg && cart.chr) { map_areas(); map_metatiles(); map_sprite_palettes(); }
 }
@@ -904,10 +962,11 @@ int allstars_loaded(void) { return as.rom != NULL; }
    SoundBuffer $F1/$F2, NoiseSoundBuffer $F3), its triangle not at all. */
 #define SND_MENU_A       0x07FC00   /* the menu's stream: $400 bytes here, then the rest at SND_MENU_B */
 #define SND_MENU_B       0x3B8000
-#define SND_SMB1         0x1F8000   /* Super Mario Bros.' songs */
-#define SND_DRIVER       0x0500     /* where both streams start the program */
+#define SND_SAMPLES      0x0B8000   /* the instruments: their directory and samples ($00:8AA3, at the title) */
+#define SND_SMB1         0x1F8000   /* Super Mario Bros.' songs ($00:8B17) */
+#define SND_DRIVER       0x0500     /* where each stream starts the program */
 #define MUS_RING         8192
-#define MUS_GAIN         2          /* All-Stars' mix, brought to the APU's loudness (both RMS about 1,400 in 1-1) */
+#define MUS_GAIN         1.16       /* All-Stars' mix, brought to the APU's loudness (both RMS about 1,390 in 1-1) */
 
 bool allstars_music_enabled;
 static spc_t *spc;
@@ -929,6 +988,7 @@ static struct {
 
 typedef uint8_t (*snd_byte)(uint32_t i);
 static uint8_t snd_menu(uint32_t i) { return i < 0x400 ? rom8(SND_MENU_A + i) : rom8(SND_MENU_B + (i - 0x400)); }
+static uint8_t snd_samples(uint32_t i) { return rom8(SND_SAMPLES + i); }
 static uint8_t snd_smb1(uint32_t i) { return rom8(SND_SMB1 + i); }
 
 /* writes a stream's blocks into the sound unit's RAM; its start address, or -1 if it is not one */
@@ -973,7 +1033,10 @@ static void music_build(void) {
     spc_ram0 = malloc(0x10000);
     if (!spc || !spc_ram0) { music_free(); return; }
     spc_reset(spc);
-    if (snd_stream(snd_menu, 0x8400) != SND_DRIVER || snd_stream(snd_smb1, 0x8000) != SND_DRIVER) { music_free(); return; }
+    /* as All-Stars loads them before Super Mario Bros. starts: the engine with the menu's songs and
+       samples, then the instruments the games' songs use (over the menu's), then the game's songs */
+    if (snd_stream(snd_menu, 0x8400) != SND_DRIVER || snd_stream(snd_samples, 0x8000) != SND_DRIVER ||
+        snd_stream(snd_smb1, 0x8000) != SND_DRIVER) { music_free(); return; }
     memcpy(spc_ram0, spc->ram, 0x10000);
     music_restart();
     apu_mask_hook = music_mask;
@@ -1156,6 +1219,19 @@ static int camera_x(void) {
 
 /* layer 1: the level's metatiles in the sandbox's BG1 tilemap, from the parsers' columns and the
    blocks VS. changed since (its block buffer) */
+/* whether VS.'s nametable still shows metatile v at a block-buffer cell: the game writes a changed block
+   to the nametable through its VRAM buffer at the next NMI (a hit block's blank, a used block, a coin
+   taken), so the arcade's picture shows the change a frame after the block buffer has it, when the
+   bouncing block's sprite appears too */
+static bool nt_shows(int col, int row, uint8_t v) {
+    int g = v >> 6;
+    uint16_t tab = (uint16_t)(cart.prg[VS_METATILE_LO - 0x8000 + g] | (cart.prg[VS_METATILE_LO + 4 - 0x8000 + g] << 8));
+    const uint8_t *t = cart.prg + tab - 0x8000 + (v & 63) * 4;   /* UL, LL, UR, LR */
+    const uint8_t *nt = ppu.vram + ppu.nt_offset[(col >> 4) & 1];
+    int tx = (col & 15) * 2, ty = row * 2 + 4;
+    return nt[ty * 32 + tx] == t[0] && nt[(ty + 1) * 32 + tx] == t[1] && nt[ty * 32 + tx + 1] == t[2] && nt[(ty + 1) * 32 + tx + 1] == t[3];
+}
+
 static uint8_t cell_metatile(int col, int row) {
     if (!area.parsed[col]) return 0;
     uint8_t v = area.vs[col][row], s = area.smas[col][row];
@@ -1164,7 +1240,7 @@ static uint8_t cell_metatile(int col, int row) {
     uint8_t expect = v >= cart.prg[VS_BB_BOUNDS - 0x8000 + (v >> 6)] ? v : 0;
     uint16_t bb = (uint16_t)(((col & 16) ? 0x05D0 : 0x0500) + row * 16 + (col & 15));
     uint8_t now = ram[bb];
-    if (now == expect) return s;
+    if (now == expect || nt_shows(col, row, v)) return s;   /* unchanged, or the change not shown yet */
     if (now == 0) return 0;
     return mt_seen_ok[now] ? mt_seen[now] : mt_static[now];
 }

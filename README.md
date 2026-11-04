@@ -7,7 +7,9 @@ arcade's RGB palette, APU, the Vs. System's mapper, coin slots and DIP switches)
 same way as the StarTropics port this one is built from.
 
 This repository contains **no game data and no game code**. The recompiler, the
-runtime and the frontend are original work (MIT licence). The game's 6502 program,
+runtime and the frontend are original work (MIT licence), but for the SNES sound unit
+of the All-Stars music (`runtime/spc700.c`), which is LakeSnes's emulation (also MIT; its
+notice is in the file). The game's 6502 program,
 graphics, music and level data all come from the dump you supply; the C code
 generated from it lives in `generated/`, which git ignores, and the executable loads
 the dump again at start-up for the assets. Without your dump nothing here runs.
@@ -72,13 +74,14 @@ the picture and the walk into the left band included).
 **All-Stars' music.** The same ROM brings All-Stars' music, chosen apart from the
 graphics: **Audio > Music: As the graphics / Arcade / All-Stars** (As the graphics, the
 default, plays All-Stars' with the All-Stars graphics and the arcade's with the
-arcade's). All-Stars' own sound program plays it: its sound engine, samples and
-Super Mario Bros. songs, written from the ROM into an emulated SNES sound unit
-(`runtime/spc700.c`: the SPC700 with its timers and ports, and the DSP with its BRR
-voices, envelopes, noise, pitch modulation and echo), which gets the song All-Stars
-asks for whenever VS. starts music (Bowser's battle song included, as in All-Stars).
-The arcade's sound effects stay: while All-Stars' music plays, the APU's channels sound
-only while an effect uses them. It costs about 0.15 ms a frame on a laptop CPU.
+arcade's). All-Stars' own sound program plays it: its sound engine, its instruments
+(the directory and samples it loads at its title screen) and its Super Mario Bros.
+songs, written from the ROM into an emulated SNES sound unit (`runtime/spc700.c`,
+LakeSnes's SPC700, timers, ports and S-DSP, run cycle by cycle), which gets the song
+All-Stars asks for whenever VS. starts music (Bowser's battle song included, as in
+All-Stars). The arcade's sound effects stay: while All-Stars' music plays, the APU's
+channels sound only while an effect uses them. It costs about 0.2 ms a frame on a
+laptop CPU.
 
 Options (all saved to `vssmb.ini`): windowed / fullscreen / exclusive fullscreen, a
 resolution list built from the display's own modes plus 1920x1080 and 3840x2160,
@@ -196,7 +199,12 @@ Verified (headless harness with scripted input and RAM pokes, screenshots inspec
   down, his flame, the castle's end with Toad's sack (1-4) and the princess (8-4),
   Podoboos, Bullet Bills, shells still and kicked, a vine, the cloud lift, springboards,
   Bloopers, Cheep-cheeps, Hammer Bros, Lakitu and Spinies, defeated enemies falling upside
-  down, the water's surface. The emulation is untouched by it: per-frame
+  down, the water's surface; blocks hit from below in 1-1 and 1-2 (a ? block with a coin, the
+  mushroom's ? block with the mushroom rising behind the used block, a brick bumped by small
+  Mario and broken by big Mario) frame by frame against the arcade, with the used block and
+  the bouncing block's place as All-Stars' own code writes them; every level's columns
+  checked against VS.'s block buffer by a debug self-check (all 32 levels, with deaths and
+  the restarts at the halfway page: no cell different). The emulation is untouched by it: per-frame
   state hashes are identical with and without it (and with the band walk), and the
   frontend self-tests pass with it on. The Linux build draws it pixel for pixel as the
   Windows build does; on the Steam Deck (offscreen, in a scratch folder) the Deck build
@@ -205,14 +213,18 @@ Verified (headless harness with scripted input and RAM pokes, screenshots inspec
   the title, the PUSH BUTTON screen and play remastered. The whole 512-pixel widescreen
   canvas costs about 2.4 ms per frame on a laptop CPU and 4.2 ms on the Deck (the
   emulation itself 2.3 ms there), well inside a 60 Hz frame
-* All-Stars' music: All-Stars' sound program runs on the emulated sound unit and plays
-  every song it uses for Super Mario Bros. (the ground theme checked note by note: its
-  key-ons give E E E C E G in the theme's rhythm, the intervals exact); the songs asked
-  for VS.'s music followed through the title's silence, 1-1, a death, the goal and 1-2's
-  pipe, and Bowser's song; the arcade's sound effects heard with the arcade's music
-  muted; with the option off the sound is the same as before bit for bit; with it on the
-  frame hashes are unchanged (six scenes) and the self-tests pass (run-ahead included),
-  on Windows and in the Linux and Deck builds; the same sound bit for bit on Linux as on
+* All-Stars' music, against All-Stars itself run in a reference SNES emulator (LakeSnes,
+  playing the ROM from power-on to 1-1): the sound unit's RAM after the port's uploads is
+  All-Stars' byte for byte but for the program's variables; in 1-1 the ground theme's
+  key-ons are All-Stars' note for note (120 compared: the same instrument and pitch on
+  every voice, within 2.3 ms), and so are the death jingle's after Mario runs into the
+  first Goomba; from one snapshot the sound unit's output is LakeSnes's bit for bit and
+  blargg's snes_spc's to a correlation of 0.999; every song number is the one All-Stars'
+  own code asks for (each call noted in the code); its level is the arcade music's (RMS
+  about 1,390 in 1-1); the arcade's sound effects heard with the arcade's music muted;
+  with the option off the sound is the same as before bit for bit; with it on the frame
+  hashes are unchanged (six scenes) and the self-tests pass (run-ahead included), on
+  Windows and in the Linux and Deck builds; the same sound bit for bit on Linux as on
   Windows; the Android APKs build with it
 
 Not yet verified: a full play-through to the ending by a person, the name entry for a
@@ -220,8 +232,9 @@ top score, and two-player games beyond starting one. In the remastered graphics:
 coin heaven itself (the cloud lift was checked on a lift drawn as one), Toad's scenes
 in worlds 2-7 (All-Stars' own code runs them, as it does world 1's, which was checked),
 and a real window on the Deck in Game Mode. All-Stars' music has not been listened to
-by a person yet (it was checked by its notes and levels), nor run on the Deck or an
-Android device; it is mixed to mono, as the port's sound is.
+by a person yet (it was checked against All-Stars in the reference emulator, note by
+note), nor run on the Deck or an Android device; it is mixed to mono, as the port's
+sound is.
 
 ## Legal note
 

@@ -32,7 +32,7 @@ runtime/bandwalk.c   the player walking into the left band (patches to the game'
 runtime/allstars.c   the remastered graphics: Super Mario All-Stars' code in a sandbox SNES, and the frame from it
 runtime/cpu816.c     65C816 interpreter for that sandbox
 runtime/snesppu.c    SNES line renderer (modes 0/1, priorities, windows, colour math, sprites) for it
-runtime/spc700.c     the SNES sound unit (SPC700, timers, ports, S-DSP) for All-Stars' music
+runtime/spc700.c     the SNES sound unit (SPC700, timers, ports, S-DSP) for All-Stars' music: LakeSnes's (MIT)
 runtime/sys.c        power/reset, frame loop, save states
 runtime/headless.c   command-line harness (tests, scripting, pokes, screenshots, traces, coverage)
 runtime/recomp_rt.h  helpers used by the generated code
@@ -291,8 +291,10 @@ queued. VS. numbers its areas differently and has levels of its own, so `map_are
 scores every All-Stars area of the same type: first the header's background (night,
 snow) and style (mushrooms, cannons), because All-Stars picks the sky and scenery by
 area number, then the longest common subsequence of the object lists. The header's
-settings themselves are VS.'s, as its InitializeArea left them (kept at the parser's
-first column: objects change them as the parser meets them).
+settings themselves are VS.'s, decoded from the area's two header bytes as its
+GetAreaDataAddrs ($AC0E) does: VS. copies each area's data to PRG RAM ($6200), where the
+header stays while the area runs (objects change the settings in RAM as the parser meets
+them, so a later rebuild cannot take them from there).
 
 **Columns.** VS.'s AreaParserCore ($A2D7) is a hook too: for every column VS. parses,
 All-Stars' AreaParserCore ($03:A436) parses the same column of VS.'s own level data
@@ -304,10 +306,19 @@ columns: a ring of 64 snapshots of All-Stars' parser state (the low 8 KiB of wor
 RAM) lets a column be parsed again from the state before it; when none is kept, or the
 area is new or not the one built, the area is rebuilt and replayed from its start at
 the next picture (VS.'s parser run again in the CPU sandbox, column by column, with
-All-Stars' beside it). VS.'s demo, for one, carries on from the title's columns.
+All-Stars' beside it). VS.'s demo, for one, carries on from the title's columns. The
+replay takes the area from VS.'s RAM (its data in PRG RAM, the data pointers, the area
+type, the header) rather than from InitializeArea's AreaPointer, which the title screen
+leaves pointing at another area, and starts on the page VS.'s parser began the area on
+(seen at its first column: the halfway page after a death is cleared later), so that it
+gives VS.'s own metatiles for every column; a debug self-check found the replayed columns
+equal to VS.'s block buffer in all 32 levels, deaths and restarts included.
 
 **A frame.** Layer 1 is the parsed columns as All-Stars' map16 words, with the blocks
-VS. changes during play (its block buffer) put in; layer 2 is All-Stars' hills from its
+VS. changes during play (its block buffer) put in as All-Stars' own code writes them:
+the place of a bouncing block ($27) and the used block ($FC) from its PlayerHeadCollision
+($03:BEC6), the vine's cells ($2A, $03:BA99), a coin or brick gone as nothing, and
+otherwise by the pairs the two parsers produced; layer 2 is All-Stars' hills from its
 RAM pages at half the camera's speed; layer 3 its clouds at a quarter above ground (under
 water the surface's waves, elsewhere nothing), below the status bar's IRQ split, and
 above it the status bar from VS.'s nametable in All-Stars' font. The sky's gradient is the sandbox's HDMA, replayed line by line; the
@@ -357,13 +368,17 @@ outlined in a dark shade of their colour, as All-Stars draws its sprites; Mario 
 All-Stars' frame for the pose VS. draws.
 
 **Music.** All-Stars' music is its own sound program on an emulated SNES sound unit,
-`spc700.c`: the SPC700 (every instruction, with its cycle counts), its three timers and
-four ports, and the S-DSP modelled per sample (BRR decoding with its four filters, a
-Gaussian-shaped interpolation, ADSR and GAIN envelopes on the hardware's rate table,
-noise, pitch modulation, echo with the 8-tap FIR, KON / KOFF / ENDX). No boot ROM: the
-streams All-Stars uploads ($00:8B17: the menu's engine and samples from $07:FC00 and
-$3B:8000, then Super Mario Bros.' songs from $1F:8000; blocks of length, address and
-bytes) are written into its RAM and the program started at $0500. Each real frame (not
+`spc700.c`: LakeSnes's SPC700, timers, ports and S-DSP (github.com/angelo-wf/LakeSnes,
+MIT licence, its notice in the file), stepped cycle by cycle, the DSP making a sample
+every 32 cycles. From the same snapshot of All-Stars' music its output is LakeSnes's bit
+for bit and matches blargg's snes_spc, the core of most SNES players, to a correlation of
+0.999. No boot ROM: the streams All-Stars uploads before Super Mario Bros. starts (blocks
+of length, address and bytes, each ending with a jump to $0500) are written into its RAM
+in its order: the engine with the menu's songs and samples ($07:FC00 and $3B:8000), the
+instruments the games use, their directory at $3C00 and samples at $4000-$BC1F
+($0B:8000, uploaded at the title, $00:8AA3), then Super Mario Bros.' songs ($1F:8000,
+$00:8B17); the result is the sound unit's RAM in All-Stars itself (run in a reference
+emulator) byte for byte, but for the program's variables. Each real frame (not
 the run-ahead ones) the port routine All-Stars runs in its NMI ($04:8163) is repeated:
 the song asked for is held on port 2 until the program echoes it, an effect on port 0
 for up to 3 frames, then the sound unit runs a frame's 17,039 cycles and its 32 kHz
