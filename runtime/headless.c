@@ -210,6 +210,8 @@ static void usage(void) {
         "  --allstars-png FILE write the last frame remastered (with --png-every N: FILE.NNNNN.png every N frames;\n"
         "                      frames it cannot draw are skipped)\n"
         "  --allstars-wide FILE the same with the widescreen canvas (512x240)\n"
+        "  --allstars-dump PREFIX at the end, the SNES sandboxes as files (work RAM, VRAM, CGRAM, OAM,\n"
+        "                      registers, the parsed columns; PREFIX-screen.* for the screens')\n"
         "  --wav FILE          write audio to a 48 kHz WAV\n"
         "  --trace FILE        write a per-instruction trace (interpreter)\n"
         "  --nestest N         nestest mode: start at $C000 and run N instructions\n"
