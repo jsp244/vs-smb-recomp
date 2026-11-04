@@ -248,7 +248,19 @@ between). A press held for ten frames or more counts as deliberate and is not
 undone. Buttons held when the game resumes from the menu are masked until released.
 
 **Frame pacing.** Windows phase-locks to the monitor's vblank (DXGI
-`WaitForVBlank`) and presents just before it; LATENCY.md has the measurements.
+`WaitForVBlank`) and presents just before it; Android locks each frame to the
+Choreographer's frame deadlines (API 33, looked up with `dlsym`) and asks for the
+highest display mode that is a multiple of 60 Hz; Linux and the Steam Deck pace by
+the timer without vsync (or with vsync when Low-latency sync is off). LATENCY.md
+has the measurements.
+
+**Ports.** The same frontend builds for Linux (`tools/linux`: SDL2 linked
+statically, so the binary needs only glibc), for the Steam Deck (`DECK_EDITION`, or
+a Linux build that reads Valve's DMI board name: fullscreen, the aspect shaped like
+the screen, pad-first hints, LT + RT for the menu) and for Android (`android/`: the
+game as `libmain.so` under SDL's Java glue; the system document picker hands the
+chosen dump back as a drop event; the phone edition adds `touchpad.c`'s on-screen
+controller, whose buttons land in the same pad byte as a controller's).
 
 **Shaders.** `draw_game_ex` composes the picture into a render target when a
 shader or an internal resolution is active: game frame (nearest / linear / sharp
@@ -263,4 +275,4 @@ vignette; then the target is drawn to the window either 1:1, scaled, or as a
   they appear at the old edge; drawing them earlier would mean running the
   game's spawn and sprite code for a wider screen.
 * Keeping the top score between sessions (the board keeps it only while powered).
-* Linux, Steam Deck and Android packages, as for the StarTropics port.
+* A 2P start button on the phone edition's on-screen controller.

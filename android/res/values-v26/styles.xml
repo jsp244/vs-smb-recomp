@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- no focus outline around the game view when it is driven with a d-pad or keyboard -->
+    <style name="GameTheme" parent="@android:style/Theme.Black.NoTitleBar.Fullscreen">
+        <item name="android:defaultFocusHighlightEnabled">false</item>
+    </style>
+</resources>

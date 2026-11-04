@@ -1,10 +1,10 @@
 # VS. Super Mario Bros. native PC port (static recompilation)
 
-A native Windows build of Nintendo's arcade *VS. Super Mario Bros.* (Vs. System,
-1986), produced by **statically recompiling your own dump of the board** into C and
-linking it against a small hardware runtime (PPU with the arcade's RGB palette, APU,
-the Vs. System's mapper, coin slots and DIP switches). Linux, Steam Deck and Android
-builds are planned the same way as for the StarTropics port this one is built from.
+A native Windows, Linux, Steam Deck and Android build of Nintendo's arcade *VS. Super
+Mario Bros.* (Vs. System, 1986), produced by **statically recompiling your own dump of
+the board** into C and linking it against a small hardware runtime (PPU with the
+arcade's RGB palette, APU, the Vs. System's mapper, coin slots and DIP switches), the
+same way as the StarTropics port this one is built from.
 
 This repository contains **no game data and no game code**. The recompiler, the
 runtime and the frontend are original work (MIT licence). The game's 6502 program,
@@ -125,6 +125,9 @@ Requirements: a C11 compiler (gcc/clang), GNU make, Python 3, SDL2 (frontend onl
 pacman -S --needed mingw-w64-x86_64-gcc mingw-w64-x86_64-SDL2 make python
 ```
 
+**Linux**: `sudo apt install build-essential python3 libsdl2-dev` (or your distro's
+equivalent) for a local build; portable packages are built in a container (below).
+
 Then:
 
 ```
@@ -140,6 +143,48 @@ build/vssmb            # looks for rom/*.nes or *.zip next to the executable; or
 in 261 routines from static analysis alone: the recursive descent follows the game's
 jump tables, see `recomp/symbols.txt`). `make dist` zips the executable with the
 player notes (`docs/PLAYERS.md`) into `dist/`.
+
+### Linux and Steam Deck packages
+
+`tools/linux/Dockerfile` is an Ubuntu 22.04 build environment with SDL2 built from
+source as a static library that loads X11, Wayland, PipeWire, PulseAudio, ALSA and
+udev at run time. The resulting binary needs only glibc 2.34+ and libm, so it runs on
+SteamOS 3 and current distributions without installing anything. After `make recomp`:
+
+```
+docker build -t vssmb-linux tools/linux
+docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp -v "$PWD":/src -w /src vssmb-linux sh tools/linux/build.sh
+```
+
+This builds, runs the cosimulation and the frontend self-tests headless (SDL's
+offscreen driver), and writes `dist/vssmb-linux-x86_64.tar.gz` and
+`dist/vssmb-steamdeck.tar.gz`. The Steam Deck edition (`make DECK_EDITION=1`) starts
+fullscreen at the Deck's 1280x800 in the 16:10 widescreen view with pad-first hints;
+the generic Linux build does the same when it finds itself on a Deck. Its package
+carries `add-to-steam.py`, which adds the game to Steam with library artwork from
+SteamGridDB. Setup on the Deck: `docs/STEAMDECK.md`.
+
+### Android
+
+`android/build_apk.py` builds two APKs straight from the Android SDK tools (no Gradle):
+`dist/vssmb-android-handheld.apk` for gaming handhelds with built-in controls and
+`dist/vssmb-android-phone.apk` for phones, the same app with a translucent on-screen
+controller (`frontend/touchpad.c`: d-pad, B, A, COIN, START, MENU) under its own name
+("VS. Super Mario Bros. Touch"). They hold SDL2's Java glue and native library from the
+SDL source (fetched once), the game as `libmain.so` for arm64-v8a and x86_64 (NDK +
+CMake), a small activity for the system file picker, and launcher icons drawn from the
+port's own artwork; the phone edition differs only in its manifest. The app has no
+internet permission. It needs a platform 34+, build-tools, an NDK and CMake from the SDK
+manager, plus a JDK; both APKs are signed with a key kept in
+`~/.android/vssmb-release.keystore` (created on first use).
+
+```
+python android/build_apk.py                           # after make recomp
+python android/build_apk.py --edition phone --install # one of them, and adb install it
+```
+
+Player notes for handhelds and phones: `docs/ANDROID.md`; device test tools (a virtual
+controller for adb, frame-timing summary): `tools/android/`.
 
 ### Controls
 
@@ -163,9 +208,13 @@ presented (frame delay), the GPU queue is one frame deep, **run-ahead** (default
 frame, the game's own reaction time, measured) shows the game's response on the frame
 of the press, and audio sits at 25-45 ms with dynamic rate control. Exclusive
 fullscreen bypasses the desktop compositor. `vssmb --play --stats out.txt` logs the
-measured pacing once a second.
+measured pacing once a second. On Android each frame is locked to the compositor's
+frame deadlines (Choreographer), with the display switched to 120 Hz where it can; on
+Linux and the Steam Deck frames go out without vsync, as in Mesen by default, unless
+Low-latency sync is switched off.
 
-Hotkeys: **Esc** or **Start + Insert coin** together (pad or keyboard) menu, **F11** /
+Hotkeys: **Esc** or **Start + Insert coin** together (pad or keyboard) menu, **LT + RT**
+together on Android and the Steam Deck, **F11** /
 Alt+Enter fullscreen, **F2** toggle overscan crop, **Tab** / pad RT (hold)
 fast-forward (within 1.5 s after a rewind it first goes forward again to where the
 rewind began), **P** pause, **F5** / **F8** save / load state, **F6** / **F7** previous
@@ -220,9 +269,11 @@ coverage (`--coverage FILE`), traces every instruction and dumps RAM.
 recomp/        the static recompiler (Python) and symbols.txt (address labels, no game data)
 runtime/       hardware runtime + headless harness (C11), the MAME zip reader
 frontend/      SDL2 player (menu, video, audio, input, touch controls, rewind)
+android/       Android app: CMake project, manifest, activity, build_apk.py
 tests/         accuracy tests, cosimulation, nestest comparison, module tests
-tools/         icon generator, DXGI adapter lister
-docs/          architecture notes, player notes, latency notes
+tools/         icon generator, Linux / Steam Deck build container (tools/linux), Steam
+               shortcut script (tools/steamdeck), Android device test tools, DXGI adapter lister
+docs/          architecture notes, player notes (Windows/Linux, Steam Deck, Android), latency notes
 generated/     output of make recomp (git-ignored)
 rom/           your dump (git-ignored)
 ```

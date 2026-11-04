@@ -121,6 +121,8 @@ dist: $(BUILD)/vssmb$(EXE)
 	rm -rf dist/vssmb && mkdir -p dist/vssmb
 	cp $(BUILD)/vssmb$(EXE) dist/vssmb/
 	cp docs/PLAYERS.md dist/vssmb/README.txt
+	@test "$(DECK_EDITION)" != 1 || cp docs/STEAMDECK.md dist/vssmb/STEAMDECK.txt
+	@test "$(DECK_EDITION)" != 1 || cp tools/steamdeck/add-to-steam.py dist/vssmb/
 	@test "$(WINDOWS)" = 1 || cp frontend/icon_preview.png dist/vssmb/vssmb.png
 	$(PYTHON) -c "import shutil; shutil.make_archive('dist/vssmb-$(PLATFORM)', '$(ARCHIVE)', 'dist', 'vssmb')"
 	@echo "package: dist/vssmb-$(PLATFORM).$(if $(filter zip,$(ARCHIVE)),zip,tar.gz)"

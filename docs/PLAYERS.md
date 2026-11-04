@@ -7,7 +7,7 @@ suprmrio.zip. The program checks the hash and refuses anything else.
 
 Getting started
 ---------------
-1. Run vssmb.exe.
+1. Run vssmb.exe (Windows) or vssmb (Linux).
 2. On the ROM tab choose "Choose ROM file..." and pick your .nes or .zip file, or
    drop the file onto the window, or start the program with the file as an argument.
 3. Go to Play > Start game. The chosen file is remembered in vssmb.ini.
@@ -92,9 +92,10 @@ saves/<rom name>.state1-9  save state slots (F5 / F8, F6 / F7 to pick one)
 screenshots/               F12 screenshots
 vssmb.ini                  settings and the remembered ROM path
 
-These live next to vssmb.exe when that folder is writable. If it is not (Program
+These live next to the program when that folder is writable. If it is not (Program
 Files, a read-only location, or the program was started from inside the zip),
-they go to %APPDATA%\VSSMBPort\VSSuperMarioBros\ instead.
+they go to %APPDATA%\VSSMBPort\VSSuperMarioBros\ instead (on Linux
+~/.local/share/VSSMBPort/VSSuperMarioBros/).
 
 The ROM tab shows the SHA-1, MD5 and CRC32 of your dump and whether it matches a
 known VS. Super Mario Bros. dump (MAME's suprmrio set gives the same image).

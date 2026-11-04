@@ -2,8 +2,8 @@
  * touchpad.c - the on-screen NES controller of the phone edition.
  *
  * Translucent controls drawn over the picture and played with the fingers: the d-pad at the
- * bottom left, B and A at the bottom right, Select and Start at the bottom centre and MENU at
- * the top. Every finger is followed from the moment it lands. One that lands on the d-pad
+ * bottom left, B and A at the bottom right, COIN (the cabinet's coin slot, on the pad's Select
+ * line) and START at the bottom centre and MENU at the top. Every finger is followed from the moment it lands. One that lands on the d-pad
  * steers it until it is lifted, by its angle from the centre (eight ways, the diagonals
  * narrower than the four directions). One that lands on B or A presses whichever it is over as
  * it slides, and both between them. The buttons reach the game in the same pad byte as a
@@ -245,7 +245,7 @@ void touchpad_draw(SDL_Renderer *r, int w, int h) {
 
     draw_button(r, &lay.b, "B", (held & NES_B) != 0);
     draw_button(r, &lay.a, "A", (held & NES_A) != 0);
-    draw_box(r, &lay.select, "SELECT", (held & NES_SELECT) != 0);
+    draw_box(r, &lay.select, "COIN", (held & NES_SELECT) != 0);
     draw_box(r, &lay.start, "START", (held & NES_START) != 0);
     int menu_down = 0;
     for (int i = 0; i < MAX_FINGERS; i++) if (fingers[i].used && fingers[i].ctl == CTL_MENU) menu_down = 1;

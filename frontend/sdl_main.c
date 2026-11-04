@@ -1627,7 +1627,7 @@ static void build_menu(void) {
         "P pause, F5 / F8 save / load, F6 / F7 slot, F11 fullscreen, F12 screenshot, Ctrl+R reset.", NULL };
     if (touchpad_enabled())
         snprintf(ctl_items[K_TOTAL + 2].info, sizeof ctl_items[K_TOTAL + 2].info, "%s",
-                 "On the screen: d-pad, B, A, Select, Start, and MENU for this menu (Back works too). "
+                 "On the screen: d-pad, B, A, COIN (insert coin), START (1 player), and MENU for this menu (Back works too). "
                  "A controller can be used as well: the screen's controls step aside until you touch it again.");
     else if (handheld)
         snprintf(ctl_items[K_TOTAL + 2].info, sizeof ctl_items[K_TOTAL + 2].info, "%s",
