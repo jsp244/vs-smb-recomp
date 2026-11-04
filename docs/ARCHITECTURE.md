@@ -28,6 +28,9 @@ runtime/cart.c       iNES / NES 2.0 loader, hashes, Vs. System detection
 runtime/romzip.c     MAME's suprmrio.zip as an iNES image (zip directory, inflate, CRC checks)
 runtime/palette.c    NTSC composite palette, the 2C03 and RP2C04 RGB palettes
 runtime/widescreen.c the level beside the picture, from the nametables, with its objects (CPU sandbox)
+runtime/allstars.c   the remastered graphics: Super Mario All-Stars' code in a sandbox SNES, and the frame from it
+runtime/cpu816.c     65C816 interpreter for that sandbox
+runtime/snesppu.c    SNES line renderer (modes 0/1, priorities, windows, colour math, sprites) for it
 runtime/sys.c        power/reset, frame loop, save states
 runtime/headless.c   command-line harness (tests, scripting, pokes, screenshots, traces, coverage)
 runtime/recomp_rt.h  helpers used by the generated code
@@ -231,6 +234,88 @@ nametable writes it queues in VRAM_Buffer2 ($0341, the NMI's format) to a copy o
 the nametables. Band pixels left of the start page come from that copy while the
 area on screen (world, level, area number, type and data offset) is the one it was
 made for.
+
+## Remastered graphics (Super Mario All-Stars)
+
+`runtime/allstars.c` draws the frame as Super Mario All-Stars draws Super Mario
+Bros., from the player's own All-Stars ROM (hash-checked; USA, and the Wii and
+Switch Online copies whose banks $03-$0C are the same). All-Stars' SMB1 is the NES
+engine rewritten in 65816 code: most of the RAM layout and the object and metatile
+logic are the NES game's, the art and the PPU setup are new. Rather than describing
+that art, the port runs All-Stars' own code in a sandbox SNES: `cpu816.c` (the whole
+65C816 instruction set, both register widths, decimal mode) on 128 KiB of work RAM,
+with a bus that keeps VRAM, CGRAM, OAM, DMA and HDMA, the multiplier and the PPU
+registers in a `snesppu_t`. Nothing in the sandbox touches the NES machine, and the
+NES machine runs the same with it or without it (per-frame state hashes compared).
+
+**Areas.** At start-up the sandbox runs All-Stars' reset code to its first NMI wait
+(base tiles, registers), and keeps that state. When VS. starts an area (its
+InitializeArea hook at $965C), the sandbox copies that state and runs All-Stars'
+InitializeArea ($03:9E0C) and area graphics and colour setup ($04:956B, $04:9A88) for
+the All-Stars area that looks most like VS.'s, then All-Stars' NMI to upload what they
+queued. VS. numbers its areas differently and has levels of its own, so `map_areas`
+scores every All-Stars area of the same type: first the header's background (night,
+snow) and style (mushrooms, cannons), because All-Stars picks the sky and scenery by
+area number, then the longest common subsequence of the object lists. The header's
+settings themselves are VS.'s, as its InitializeArea left them (kept at the parser's
+first column: objects change them as the parser meets them).
+
+**Columns.** VS.'s AreaParserCore ($A2D7) is a hook too: for every column VS. parses,
+All-Stars' AreaParserCore ($03:A436) parses the same column of VS.'s own level data
+(copied from VS.'s work RAM and converted to All-Stars' format, where row-15 objects
+have a third byte), in step: page, column and block-buffer position are VS.'s. The
+metatiles that come out are All-Stars' choice for VS.'s level (the bushes a row lower,
+bridge rails with ends, two castle wall patterns). Run-ahead and rewind re-parse
+columns: a ring of 64 snapshots of All-Stars' parser state (the low 8 KiB of work
+RAM) lets a column be parsed again from the state before it; when none is kept, or the
+area is new or not the one built, the area is rebuilt and replayed from its start at
+the next picture (VS.'s parser run again in the CPU sandbox, column by column, with
+All-Stars' beside it). VS.'s demo, for one, carries on from the title's columns.
+
+**A frame.** Layer 1 is the parsed columns as All-Stars' map16 words, with the blocks
+VS. changes during play (its block buffer) put in; layer 2 is All-Stars' hills from its
+RAM pages at half the camera's speed; layer 3 its clouds at a quarter, below the
+status bar's IRQ split, and above it the status bar from VS.'s nametable in
+All-Stars' font. The sky's gradient is the sandbox's HDMA, replayed line by line; the
+animated tiles (? blocks, coins, bushes, water, lava) are All-Stars' frames at VS.'s
+frame counter. Sprites come from VS.'s OAM, attributed to their owners by VS.'s
+sprite-data offsets (the copy of RAM the engine built them from, with one shuffler
+step undone when that copy is a frame ahead): the player's 8 sprites become
+All-Stars' frame for the same pose (8 tiles per pose in bank $0A, Luigi's $4000
+further) in All-Stars' colours (Mario, Luigi, fiery, the star's 4-set cycle); enemies
+keep the NES tile numbers, which All-Stars mostly kept, with the tiles it moved found
+by comparing the two enemy graphics tables, and get All-Stars' palette for their
+type; fireballs, fire bars, explosions, jumping coins, hammers, bubbles, lifts and
+bouncing blocks get the tiles, palettes and 16x16 sizes All-Stars' own handlers use
+(the constants are noted at each in the code). `snesppu.c` then draws mode 1 with
+All-Stars' priorities, windows and colour math (layers 2 and 3 on the subscreen,
+added to the backdrop). In the widescreen canvas the frame is drawn in three parts,
+the bands with the sprites the game builds there (`widescreen_band_oam`: the same
+engine re-run as the arcade bands), and beyond the level the game holds the canvas
+is black, as with the arcade graphics.
+
+**Screens.** A second sandbox draws the rest. The intermission is All-Stars' own: its
+player head and world-picture objects, its world picture, its text and lives, then its
+NMI. The title's banner is All-Stars' (its DrawTitleScreen's stripes, uploaded by its
+NMI) a row higher, its SUPER six columns right, and "VS." in front: All-Stars' S, the
+dot of BROS. with a stroke's shadow under it, and a V. All-Stars has no V; the arcade's
+V is its U with a narrowed lower half, so the port does the same to All-Stars' U: each
+pixel of the arcade V's lower half is painted as All-Stars paints a straight stroke at
+that height (outline, fill, the red band, the shadow), chosen by its distance from
+the letter's edge; the same rule turns the arcade's U into All-Stars' U but for 6 of its
+256 lower pixels. The banner and the title's text scroll away with the demo, column by
+column, as the arcade's nametable loses them. Text in a level (the title's lines, the
+castles' messages) is VS.'s nametable text in All-Stars' layer 1 font. The screens only
+the arcade has (PUSH BUTTON, the continue countdown, game over, the coin and credit
+lines) are VS.'s text in All-Stars' layer 3 font on the intermission's backdrop, lines
+the arcade blinks blinking with it; the cabinet's buttons and the timer's box are the
+arcade's pixels and colours, lit from the top left, shaded at the bottom right and
+outlined in a dark shade of their colour, as All-Stars draws its sprites; Mario there is
+All-Stars' frame for the pose VS. draws.
+
+Nothing from either ROM is stored: All-Stars' graphics and code are read from the
+player's file at run time and kept in memory, and the tiles made for the screens are
+made again for each frame in the copy of the PPU it is drawn from.
 
 ## Known inaccuracies
 

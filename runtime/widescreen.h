@@ -38,6 +38,21 @@ extern bool widescreen_sprites, widescreen_fill;
    ROM load makes the objects appear from the first frame. */
 void widescreen_attach(void);
 
+/* The RAM the engine built the sprites the PPU shows from (a copy made at GameEngine's start of the
+   previous frame), NULL when there is none (not in a level). Right after a state load there is only
+   this frame's copy, a frame ahead: *ahead is then 1. */
+const uint8_t *widescreen_shown_ram(int *ahead);
+/* The picture's columns [lo, hi) that show the level this frame (beyond 0..256 in the bands); 0 when
+   the frame is not a level (a text screen, the intermission). */
+int widescreen_level_window(int *lo, int *hi);
+
+/* The sprites the game builds beside the picture, for other renderers (the remastered graphics): the
+   64 OAM entries of the frame's engine run with the camera moved to the left (side 0) or right (side 1),
+   and how far right of their OAM X they land on the picture (*dx). Entries equal to the PPU's own are
+   the picture's objects, not new ones. Returns 0 when there is no such run (not in a level, objects
+   beside the picture off). */
+int widescreen_band_oam(int side, uint8_t oam[256], int *dx);
+
 /* Self-check of the objects: runs the engine run whose sprites the PPU shows again, with the camera
    where it was, and compares the sprites it builds with the PPU's. Returns 1 when identical, 0 when
    they differ, -1 when there is no run to repeat (not in a level, or right after a state load). */

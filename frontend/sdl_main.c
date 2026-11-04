@@ -40,6 +40,7 @@
 #include "input.h"
 #include "gpu_sync.h"
 #include "widescreen.h"
+#include "allstars.h"
 #include "rewind.h"
 #include "touchpad.h"
 #include "updater.h"
@@ -98,7 +99,9 @@ typedef struct {
     int bonus;           /* switches 5-6: coins for an extra life, 0 100, 1 150, 2 200, 3 250 */
     int fast_timer;      /* switch 7: the clock runs faster */
     int continue_lives;  /* switch 8: lives after a continue, 0 four, 1 three */
+    int allstars;        /* graphics: 0 the arcade's, 1 Super Mario All-Stars' (needs that ROM: allstars_rom) */
     char rom[2048];
+    char allstars_rom[2048];
 } config_t;
 
 static config_t cfg = {
@@ -107,7 +110,7 @@ static config_t cfg = {
     .window_size = 3, .display_mode = 0, .resolution = 0, .res_w = 0, .res_h = 0, .scaling = 1, .aspect = 1, .colors = 0, .filter = 2,
     .shader = 0, .shader_strength = 1, .overscan = 1, .no_sprite_limit = 0, .volume = 100,
     .lowlat = 1, .runahead = GAME_LAG, .audio_latency = 1, .rewind = 1, .state_slot = 1,
-    .coinage = 0, .lives = 0, .bonus = 0, .fast_timer = 0, .continue_lives = 0, .rom = ""
+    .coinage = 0, .lives = 0, .bonus = 0, .fast_timer = 0, .continue_lives = 0, .allstars = 1, .rom = "", .allstars_rom = ""
 };
 
 static const char *const display_modes[] = { "Windowed", "Fullscreen", "Fullscreen (exclusive)" };
@@ -117,6 +120,7 @@ static const char *const window_sizes[]  = { "1x", "2x", "3x", "4x", "5x", "6x" 
 static const char *const scalings[]      = { "Integer (exact pixels)", "Fit (fills the screen)", "Stretch (distorts)" };
 static const char *const aspects[]       = { "Square pixels 8:7", "4:3 (CRT)", "16:9 (widescreen)", "16:10 (widescreen)" };
 static const char *const color_names[]   = { "Arcade (RGB monitor)", "NES (composite)" };
+static const char *const graphics_names[] = { "Arcade", "All-Stars" };
 static const char *const coinage_names[] = { "Free play", "1 coin, 1 credit", "2 coins, 1 credit", "3 coins, 1 credit",
                                              "1 coin, 2 credits", "1 coin, 3 credits", "1 coin, 4 credits", "1 coin, 5 credits" };
 static const char *const lives_names[]   = { "3", "2" };
@@ -156,6 +160,7 @@ static char ini_path[1200];
 static char rom_name[256];            /* ROM file name without extension, for save files */
 static char sav_path[2048], state_dir[1200];
 static char rom_status[240];
+static char allstars_status[240];   /* the All-Stars ROM: what was loaded, or why not */
 static uint32_t palette[512];
 static uint32_t frame_rgb[WS_W * WS_H];   /* the picture to show, frame_w x frame_h (see frame_to_rgb) */
 static uint8_t wide_fb[WS_W * WS_H];      /* widescreen: that part of the canvas around the PPU's picture */
@@ -197,14 +202,15 @@ static int vsync_div = 1;             /* vblanks per game frame (2 on a 120 Hz d
 static double refresh_hz;             /* reported display refresh rate, 0 if unknown */
 
 /* menu */
-enum { ACT_PLAY = 1, ACT_RESET, ACT_SAVE, ACT_LOAD, ACT_STOP, ACT_QUIT, ACT_CHOOSE, ACT_KEYS_DEFAULT, ACT_UPDATE,
+enum { ACT_PLAY = 1, ACT_RESET, ACT_SAVE, ACT_LOAD, ACT_STOP, ACT_QUIT, ACT_CHOOSE, ACT_CHOOSE_ALLSTARS, ACT_KEYS_DEFAULT, ACT_UPDATE,
        GFX_CHANGED, AUD_CHANGED, LAT_CHANGED, KEY_CHANGED, SLOT_CHANGED, DIP_CHANGED };
 enum { TAB_PLAY, TAB_GFX, TAB_AUDIO, TAB_CONTROLS, TAB_CABINET, TAB_ROM, TAB_UPDATES, N_TABS };
-static ui_item play_items[8], gfx_all[14], gfx_items[14], aud_items[3], ctl_items[K_TOTAL + 3], cab_items[7], rom_items[3],
+static ui_item play_items[8], gfx_all[15], gfx_items[15], aud_items[3], ctl_items[K_TOTAL + 3], cab_items[7], rom_items[6],
                upd_items[3];
-#define GFX_ROWS 14
+#define GFX_ROWS 15
 #define GFX_WINDOW_SIZE_ROW 2
-#define GFX_INFO_ROW 13
+#define GFX_GRAPHICS_ROW 4
+#define GFX_INFO_ROW 14
 static ui_tab tabs[N_TABS];
 static ui_menu menu;
 
@@ -348,11 +354,10 @@ static int on_steam_deck(void) {
 #endif
 }
 
-/* names of the .nes and .zip files in dir (any case), up to max */
-static int list_rom_files(const char *dir, char names[][512], int max) {
+/* names of the files in dir with one of the two extensions (3 letters, any case), up to max */
+static int list_files_ext(const char *dir, const char *const exts[2], char names[][512], int max) {
     int n = 0;
 #ifdef _WIN32
-    static const char *const exts[2] = { "nes", "zip" };
     for (int x = 0; x < 2 && n < max; x++) {
         wchar_t pattern[1300];
         char pat8[1300];
@@ -373,12 +378,19 @@ static int list_rom_files(const char *dir, char names[][512], int max) {
     struct dirent *e;
     while (n < max && (e = readdir(d)) != NULL) {
         size_t len = strlen(e->d_name);
-        if (len > 4 && len < 512 && (SDL_strcasecmp(e->d_name + len - 4, ".nes") == 0 || SDL_strcasecmp(e->d_name + len - 4, ".zip") == 0))
+        if (len > 4 && len < 512 && e->d_name[len - 4] == '.' &&
+            (SDL_strcasecmp(e->d_name + len - 3, exts[0]) == 0 || SDL_strcasecmp(e->d_name + len - 3, exts[1]) == 0))
             snprintf(names[n++], 512, "%s", e->d_name);
     }
     closedir(d);
 #endif
     return n;
+}
+
+/* names of the .nes and .zip files in dir (any case), up to max */
+static int list_rom_files(const char *dir, char names[][512], int max) {
+    static const char *const exts[2] = { "nes", "zip" };
+    return list_files_ext(dir, exts, names, max);
 }
 
 /* ------------------------------------------------------------------ */
@@ -389,6 +401,7 @@ static void write_config(void) {
     if (!f) return;
     fputs("; VS. Super Mario Bros. native port - settings (also editable from the in-game menu, Esc)\n", f);
     fprintf(f, "rom=%s\n", cfg.rom);
+    fprintf(f, "allstars_rom=%s\n", cfg.allstars_rom);
     fputs("; keyboard: SDL key names (single letters/digits, or return, space, right shift, left ctrl, up, keypad 5 ...)\n", f);
     for (int i = 0; i < K_TOTAL; i++) fprintf(f, "%s=%s\n", key_names[i], SDL_GetKeyName((SDL_Keycode)cfg.key[i]));
     fputs("; gamepad buttons: A B X Y Back Start LB RB LS RS D-pad Up/Down/Left/Right, or none (left stick is always the d-pad)\n", f);
@@ -400,6 +413,7 @@ static void write_config(void) {
     fprintf(f, "scaling=%d             ; 0 integer (exact pixels, may leave borders), 1 fit (fills the screen), 2 stretch (distorts)\n", cfg.scaling);
     fprintf(f, "aspect=%d              ; 0 square pixels, 1 4:3 CRT, 2 16:9 widescreen, 3 16:10 widescreen (the level drawn beside the picture, black bars elsewhere)\n", cfg.aspect);
     fprintf(f, "colors=%d              ; 0 arcade (the RGB monitor of the cabinet), 1 NES (the colours a console shows)\n", cfg.colors);
+    fprintf(f, "allstars=%d            ; graphics: 1 those of Super Mario All-Stars (from allstars_rom above), 0 the arcade's\n", cfg.allstars);
     fprintf(f, "filter=%d              ; 0 nearest, 1 linear, 2 sharp\n", cfg.filter);
     fprintf(f, "shader=%d              ; 0 off, 1 scanlines, 2 CRT, 3 CRT curved, 4 glow\n", cfg.shader);
     fprintf(f, "shader_strength=%d     ; 0 light, 1 medium, 2 strong\n", cfg.shader_strength);
@@ -453,6 +467,8 @@ static void load_config(void) {
         }
         if (handled) continue;
         if (!strcmp(key, "rom")) snprintf(cfg.rom, sizeof cfg.rom, "%s", val);
+        else if (!strcmp(key, "allstars_rom")) snprintf(cfg.allstars_rom, sizeof cfg.allstars_rom, "%s", val);
+        else if (!strcmp(key, "allstars")) cfg.allstars = atoi(val) ? 1 : 0;
         else if (!strcmp(key, "window_size")) { int v = atoi(val); if (v >= 1 && v <= 6) cfg.window_size = v; }
         else if (!strcmp(key, "display_mode")) { int v = atoi(val); if (v >= 0 && v <= 2) cfg.display_mode = v; }
         else if (!strcmp(key, "resolution")) {
@@ -633,6 +649,11 @@ static void frame_to_rgb(const SDL_Rect *src) {
     const uint8_t *fb = ppu.fb + src->y * FB_W + src->x, *emph = ppu.line_emph + src->y;
     int stride = FB_W;
     frame_w = src->w; frame_h = src->h;
+    /* the remastered picture (All-Stars' graphics), where it can be drawn */
+    if (allstars_enabled && allstars_loaded()) {
+        int x0 = widescreen_on() ? src->x - WS_BAND : src->x, y0 = widescreen_on() ? src->y - WS_VBAND : src->y;
+        if (allstars_render(frame_rgb, frame_w, x0, y0, frame_w, frame_h)) return;
+    }
     if (widescreen_on()) {
         int level = widescreen_render(wide_fb, wide_emph, src->x, src->y, src->w, src->h);
         if (!level && cfg.overscan && integer_fill())
@@ -989,6 +1010,7 @@ static void apply_graphics(void) {
     if (cfg.resolution > 0 && cfg.resolution < n_res) { cfg.res_w = res_list[cfg.resolution].w; cfg.res_h = res_list[cfg.resolution].h; }
     else { cfg.resolution = 0; cfg.res_w = cfg.res_h = 0; }
     ppu_no_sprite_limit = cfg.no_sprite_limit != 0;
+    allstars_enabled = cfg.allstars != 0;
     build_palette();
     Uint32 flags = SDL_GetWindowFlags(window);
     int cur = ((flags & SDL_WINDOW_FULLSCREEN_DESKTOP) == SDL_WINDOW_FULLSCREEN_DESKTOP) ? 1 : (flags & SDL_WINDOW_FULLSCREEN) ? 2 : 0;
@@ -1399,6 +1421,7 @@ static int load_rom_file(const char *path) {
     sys.use_recomp = native != 0;
     rom_ok = 1;
     widescreen_attach();   /* the copies the widescreen view draws its objects and missing pages from, from the first frame */
+    allstars_attach();     /* and the remastered graphics their columns */
     build_palette();
     set_rom_name(path);
     snprintf(state_dir, sizeof state_dir, "%ssaves", data_dir);
@@ -1433,10 +1456,9 @@ static int load_rom_file(const char *path) {
 /* ------------------------------------------------------------------ */
 /* menu                                                                */
 /* ------------------------------------------------------------------ */
-/* no ROM chosen yet: look for the dump (.nes or MAME's .zip) next to the program, in its rom/ folder and in
-   the data folder (and on Android in the app's own folder on the shared storage) */
-static int find_rom_nearby(void) {
-    char dirs[5][1200];
+/* the folders a ROM is looked for in: next to the program, its rom/ folder, the data folder (and on Android
+   the app's own folder on the shared storage), without a trailing separator */
+static int nearby_dirs(char dirs[5][1200]) {
     int nd = 0;
     snprintf(dirs[nd++], sizeof dirs[0], "%s", base_dir);
     snprintf(dirs[nd++], sizeof dirs[0], "%srom", base_dir);
@@ -1445,10 +1467,19 @@ static int find_rom_nearby(void) {
     const char *ext = SDL_AndroidGetExternalStoragePath();
     if (ext) snprintf(dirs[nd++], sizeof dirs[0], "%s", ext);
 #endif
-    static char names[32][512];
     for (int d = 0; d < nd; d++) {
         size_t dl = strlen(dirs[d]);
         if (dl && (dirs[d][dl - 1] == '/' || dirs[d][dl - 1] == '\\')) dirs[d][dl - 1] = 0;
+    }
+    return nd;
+}
+
+/* no ROM chosen yet: look for the dump (.nes or MAME's .zip) in those folders */
+static int find_rom_nearby(void) {
+    char dirs[5][1200];
+    int nd = nearby_dirs(dirs);
+    static char names[32][512];
+    for (int d = 0; d < nd; d++) {
         int n = list_rom_files(dirs[d], names, 32);
         for (int i = 0; i < n; i++) {
             char path[2048];
@@ -1482,6 +1513,7 @@ static void layout_gfx(void) {
     for (int i = 0; i < GFX_ROWS; i++) {
         if (i == GFX_WINDOW_SIZE_ROW && cfg.res_w > 0) continue;
         if (handheld && i <= GFX_WINDOW_SIZE_ROW) continue;   /* display mode, resolution, window size: the screen is fixed */
+        if (i == GFX_GRAPHICS_ROW && !allstars_loaded()) continue;   /* Arcade / All-Stars once that ROM is chosen */
         gfx_items[n++] = gfx_all[i];
     }
     tabs[TAB_GFX].nitems = n;
@@ -1583,6 +1615,12 @@ static void refresh_rom_items(void) {
     if (rom_ok) snprintf(rom_items[2].info, sizeof rom_items[2].info, "Current: %.80s (remembered for next time)\n%.150s\n%.118s",
                          rom_name, rom_status, rom_hashes);
     else snprintf(rom_items[2].info, sizeof rom_items[2].info, "Current: none\n%.230s", rom_status);
+    snprintf(rom_items[3].info, sizeof rom_items[3].info, "Remastered graphics: your own Super Mario All-Stars (SNES, USA) ROM "
+             "gives the game the graphics of All-Stars' Super Mario Bros. (Graphics tab).");
+    if (allstars_loaded())
+        snprintf(rom_items[5].info, sizeof rom_items[5].info, "Current: %.80s (remembered for next time)\nSHA-1 %s  CRC32 %08X",
+                 allstars_name(), allstars_sha1(), allstars_crc32());
+    else snprintf(rom_items[5].info, sizeof rom_items[5].info, "Current: none%s%.200s", allstars_status[0] ? "\n" : "", allstars_status);
     refresh_play_items();
     snprintf(menu.status, sizeof menu.status, "%s", rom_ok ? rom_status : "No valid ROM loaded - open the ROM tab to choose your dump");
 }
@@ -1620,16 +1658,17 @@ static void build_menu(void) {
     g[1] = (ui_item){ "Resolution", UI_CHOICE, GFX_CHANGED, &cfg.resolution, res_names, n_res, 0, 0, 0, NULL, "", NULL };
     g[2] = (ui_item){ "Window size", UI_CHOICE, GFX_CHANGED, &window_size_idx, window_sizes, 6, 0, 0, 0, NULL, "", NULL };
     g[3] = (ui_item){ "Scaling", UI_CHOICE, GFX_CHANGED, &cfg.scaling, scalings, 3, 0, 0, 0, NULL, "", NULL };
-    g[4] = (ui_item){ "Aspect ratio", UI_CHOICE, GFX_CHANGED, &cfg.aspect, aspects, 4, 0, 0, 0, NULL, "", NULL };
-    g[5] = (ui_item){ "Colors", UI_CHOICE, GFX_CHANGED, &cfg.colors, color_names, 2, 0, 0, 0, NULL, "", NULL };
-    g[6] = (ui_item){ "Filter", UI_CHOICE, GFX_CHANGED, &cfg.filter, filters, 3, 0, 0, 0, NULL, "", NULL };
-    g[7] = (ui_item){ "Shader", UI_CHOICE, GFX_CHANGED, &cfg.shader, shader_names, 5, 0, 0, 0, NULL, "", NULL };
-    g[8] = (ui_item){ "Shader strength", UI_CHOICE, GFX_CHANGED, &cfg.shader_strength, strength_names, 3, 0, 0, 0, NULL, "", NULL };
-    g[9] = (ui_item){ "Overscan crop", UI_CHOICE, GFX_CHANGED, &cfg.overscan, onoff, 2, 0, 0, 0, NULL, "", NULL };
-    g[10] = (ui_item){ "Sprite limit", UI_CHOICE, GFX_CHANGED, &cfg.no_sprite_limit, sprite_limits, 2, 0, 0, 0, NULL, "", NULL };
-    g[11] = (ui_item){ "Low-latency sync", UI_CHOICE, GFX_CHANGED, &cfg.lowlat, onoff, 2, 0, 0, 0, NULL, "", NULL };
-    g[12] = (ui_item){ "Run-ahead", UI_CHOICE, GFX_CHANGED, &cfg.runahead, runahead_names, 4, 0, 0, 0, NULL, "", NULL };
-    g[13] = (ui_item){ "", UI_INFO, 0, NULL, NULL, 0, 0, 0, 0, NULL, "", NULL };
+    g[4] = (ui_item){ "Graphics", UI_CHOICE, GFX_CHANGED, &cfg.allstars, graphics_names, 2, 0, 0, 0, NULL, "", NULL };
+    g[5] = (ui_item){ "Aspect ratio", UI_CHOICE, GFX_CHANGED, &cfg.aspect, aspects, 4, 0, 0, 0, NULL, "", NULL };
+    g[6] = (ui_item){ "Colors", UI_CHOICE, GFX_CHANGED, &cfg.colors, color_names, 2, 0, 0, 0, NULL, "", NULL };
+    g[7] = (ui_item){ "Filter", UI_CHOICE, GFX_CHANGED, &cfg.filter, filters, 3, 0, 0, 0, NULL, "", NULL };
+    g[8] = (ui_item){ "Shader", UI_CHOICE, GFX_CHANGED, &cfg.shader, shader_names, 5, 0, 0, 0, NULL, "", NULL };
+    g[9] = (ui_item){ "Shader strength", UI_CHOICE, GFX_CHANGED, &cfg.shader_strength, strength_names, 3, 0, 0, 0, NULL, "", NULL };
+    g[10] = (ui_item){ "Overscan crop", UI_CHOICE, GFX_CHANGED, &cfg.overscan, onoff, 2, 0, 0, 0, NULL, "", NULL };
+    g[11] = (ui_item){ "Sprite limit", UI_CHOICE, GFX_CHANGED, &cfg.no_sprite_limit, sprite_limits, 2, 0, 0, 0, NULL, "", NULL };
+    g[12] = (ui_item){ "Low-latency sync", UI_CHOICE, GFX_CHANGED, &cfg.lowlat, onoff, 2, 0, 0, 0, NULL, "", NULL };
+    g[13] = (ui_item){ "Run-ahead", UI_CHOICE, GFX_CHANGED, &cfg.runahead, runahead_names, 4, 0, 0, 0, NULL, "", NULL };
+    g[14] = (ui_item){ "", UI_INFO, 0, NULL, NULL, 0, 0, 0, 0, NULL, "", NULL };
 
     ui_item *a = aud_items;
     a[0] = (ui_item){ "Volume", UI_INT, AUD_CHANGED, &cfg.volume, NULL, 0, 0, 100, 5, "%", "", NULL };
@@ -1672,6 +1711,9 @@ static void build_menu(void) {
     rom_items[0] = (ui_item){ "", UI_INFO, 0, NULL, NULL, 0, 0, 0, 0, NULL, "", NULL };
     rom_items[1] = (ui_item){ "Choose ROM file...", UI_ACTION, ACT_CHOOSE, NULL, NULL, 0, 0, 0, 0, NULL, "", NULL };
     rom_items[2] = (ui_item){ "", UI_INFO, 0, NULL, NULL, 0, 0, 0, 0, NULL, "", NULL };
+    rom_items[3] = (ui_item){ "", UI_INFO, 0, NULL, NULL, 0, 0, 0, 0, NULL, "", NULL };
+    rom_items[4] = (ui_item){ "Choose All-Stars ROM...", UI_ACTION, ACT_CHOOSE_ALLSTARS, NULL, NULL, 0, 0, 0, 0, NULL, "", NULL };
+    rom_items[5] = (ui_item){ "", UI_INFO, 0, NULL, NULL, 0, 0, 0, 0, NULL, "", NULL };
 
     upd_items[0] = (ui_item){ "", UI_INFO, 0, NULL, NULL, 0, 0, 0, 0, NULL, "", NULL };
     upd_items[1] = (ui_item){ "Check for updates", UI_ACTION, ACT_UPDATE, NULL, NULL, 0, 0, 0, 0, NULL, "", NULL };
@@ -1682,7 +1724,7 @@ static void build_menu(void) {
     tabs[TAB_AUDIO] = (ui_tab){ "Audio", aud_items, 3, 0 };
     tabs[TAB_CONTROLS] = (ui_tab){ "Controls", ctl_items, K_TOTAL + 3, 0 };
     tabs[TAB_CABINET] = (ui_tab){ "Cabinet", cab_items, 7, 0 };
-    tabs[TAB_ROM] = (ui_tab){ "ROM", rom_items, 3, 1 };
+    tabs[TAB_ROM] = (ui_tab){ "ROM", rom_items, 6, 1 };
     tabs[TAB_UPDATES] = (ui_tab){ "Updates", upd_items, 3, 1 };
     memset(&menu, 0, sizeof menu);
     menu.tabs = tabs; menu.ntabs = N_TABS;
@@ -1690,7 +1732,7 @@ static void build_menu(void) {
     menu.subtitle = "native port";
     if (touchpad_enabled()) menu.hint = "Tap to choose.   In game: MENU at the top opens this menu";
     else if (handheld) menu.hint = "D-pad, A to choose, B back.   In game: LT + RT opens this menu";
-    else menu.hint = "Arrows / Enter / Esc to navigate   Drop a .nes or .zip file here to load it";
+    else menu.hint = "Arrows / Enter / Esc to navigate   Drop a .nes, .zip or All-Stars .sfc file here to load it";
     menu.hover_tab = menu.hover_item = -1;
     refresh_rom_items();
     refresh_gfx_info();
@@ -1714,6 +1756,68 @@ static void start_game(void) {
     state = ST_GAME;
     resume_suppress();
     audio_out_clear();
+}
+
+/* the All-Stars ROM: loads and checks it, then (when it is one this build knows) remembers it */
+static int load_allstars_file(const char *path) {
+    char err[200];
+    if (allstars_load(path, err, sizeof err) != 0) {
+        snprintf(allstars_status, sizeof allstars_status, "%s: %s", path, err);
+        printf("All-Stars ROM %s: %s\n", path, err);
+        refresh_rom_items();
+        return 0;
+    }
+    snprintf(allstars_status, sizeof allstars_status, "%s: hash check passed", allstars_name());
+    char full[2048];
+    absolute_path(path, full, sizeof full);
+    if (strcmp(cfg.allstars_rom, full) != 0) { snprintf(cfg.allstars_rom, sizeof cfg.allstars_rom, "%s", full); write_config(); }
+    printf("All-Stars ROM: %s (%s)\n", allstars_name(), allstars_sha1());
+    fflush(stdout);
+    layout_gfx();
+    refresh_rom_items();
+    return 1;
+}
+
+/* none chosen (or the remembered one gone): an All-Stars ROM (.sfc or .smc) where the dump is looked for;
+   files that are not one are passed over quietly */
+static int find_allstars_nearby(void) {
+    static const char *const exts[2] = { "sfc", "smc" };
+    char dirs[5][1200];
+    int nd = nearby_dirs(dirs);
+    static char names[32][512];
+    for (int d = 0; d < nd; d++) {
+        int n = list_files_ext(dirs[d], exts, names, 32);
+        for (int i = 0; i < n; i++) {
+            char path[2048], err[200];
+            snprintf(path, sizeof path, "%.1199s/%.511s", dirs[d], names[i]);
+            if (allstars_load(path, err, sizeof err) == 0 && load_allstars_file(path)) {
+                printf("found the All-Stars ROM: %s\n", path);
+                return 1;
+            }
+        }
+    }
+    return 0;
+}
+
+/* a file handed over by drag and drop or the Android document picker: All-Stars (an SNES ROM, a megabyte and
+   more) or the board's dump */
+static int looks_like_snes_rom(const char *path) {
+    FILE *f = nes_fopen(path, "rb");
+    if (!f) return 0;
+    fseek(f, 0, SEEK_END);
+    long n = ftell(f);
+    fclose(f);
+    return n >= 0x100000;
+}
+
+static void choose_allstars(void) {
+    char path[2048];
+    if (!file_dialog_available()) {
+        snprintf(allstars_status, sizeof allstars_status, "No file dialog on this system: drop the .sfc file onto the window");
+        refresh_rom_items();
+        return;
+    }
+    if (file_dialog_open_kind(window, FILE_KIND_ALLSTARS, path, sizeof path)) load_allstars_file(path);
 }
 
 static void choose_rom(void) {
@@ -1768,6 +1872,7 @@ static void menu_action(ui_event e) {
         break;
     case ACT_QUIT: running = 0; break;
     case ACT_CHOOSE: choose_rom(); break;
+    case ACT_CHOOSE_ALLSTARS: choose_allstars(); break;
     case ACT_KEYS_DEFAULT: {
         static const int def_keys[K_TOTAL] = { SDLK_x, SDLK_z, SDLK_RSHIFT, SDLK_RETURN, SDLK_UP, SDLK_DOWN, SDLK_LEFT, SDLK_RIGHT, SDLK_2,
                                                SDLK_BACKSPACE, SDLK_TAB };
@@ -2088,6 +2193,7 @@ int main(int argc, char **argv) {
     attach_parent_console();
 #endif
     const char *rom_arg = NULL, *selftest_png = NULL, *uishot_png = NULL, *gameshot_png = NULL, *list_pads_file = NULL, *stats_path = NULL;
+    const char *allstars_arg = NULL;
     const char *shot_state = NULL;
     int selftest_frames = 0, uishot_tab = 0, uishot_frames = 0, gameshot_frames = 300, rewind_test = 0, list_pads = 0, autoplay = 0;
     const char *list_modes_file = NULL;
@@ -2145,6 +2251,7 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i], "--list-modes")) { list_modes_flag = 1; if (i + 1 < argc) list_modes_file = argv[++i]; }
         else if (!strcmp(argv[i], "--stats") && i + 1 < argc) stats_path = argv[++i];
         else if (!strcmp(argv[i], "--play")) autoplay = 1;
+        else if (!strcmp(argv[i], "--allstars") && i + 1 < argc) allstars_arg = argv[++i];   /* the All-Stars ROM */
         else if (!strcmp(argv[i], "--quit-after") && i + 1 < argc) quit_after = atoi(argv[++i]);   /* game frames, for timed test runs */
         else if (!strcmp(argv[i], "--update-check")) update_test = 1;
         else if (!strcmp(argv[i], "--update-test") && i + 1 < argc) {
@@ -2284,6 +2391,12 @@ int main(int argc, char **argv) {
             refresh_rom_items();
         }
     }
+    /* ---- the All-Stars ROM for the remastered graphics: command line, else the remembered path, else one in
+       the folders the dump is looked for in ---- */
+    if (allstars_arg) load_allstars_file(allstars_arg);
+    else if (cfg.allstars_rom[0]) load_allstars_file(cfg.allstars_rom);
+    if (!allstars_arg && !allstars_loaded()) find_allstars_nearby();
+    allstars_enabled = cfg.allstars != 0;
     menu.tab = rom_ok ? TAB_PLAY : TAB_ROM;
     menu.focus = 1;
     ui_select_first(&menu);
@@ -2470,6 +2583,13 @@ int main(int argc, char **argv) {
             }
             if (ev.type == SDL_APP_DIDENTERFOREGROUND) { audio_out_clear(); continue; }
             if (ev.type == SDL_DROPFILE) {
+                if (looks_like_snes_rom(ev.drop.file)) {
+                    load_allstars_file(ev.drop.file);
+                    SDL_free(ev.drop.file);
+                    if (state == ST_GAME) continue;
+                    menu.tab = TAB_ROM; menu.focus = 1; ui_select_first(&menu);
+                    continue;
+                }
                 load_rom_file(ev.drop.file);
                 SDL_free(ev.drop.file);
                 if (state == ST_GAME && !rom_ok) open_menu();

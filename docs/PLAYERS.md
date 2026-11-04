@@ -15,6 +15,17 @@ Getting started
    (or 2 for two players). With coins switched on (Cabinet tab), press Insert
    coin (Right Shift / the pad's Back button) first.
 
+Remastered graphics (optional)
+------------------------------
+With your own Super Mario All-Stars ROM (SNES, USA version; the Wii and Switch
+Online copies of it also work) the game can look like All-Stars' Super Mario Bros.
+On the ROM tab choose "Choose All-Stars ROM..." and pick the .sfc file (or drop it
+onto the window). Its hash is checked and the path remembered; then Graphics >
+Graphics switches between Arcade and All-Stars. Levels, sprites, the status bar and
+the intermission are drawn by All-Stars' own code; the screens only the arcade has
+(the title's "VS.", PUSH BUTTON, continue, the cabinet's buttons) are drawn in
+All-Stars' style. The widescreen views work with it.
+
 Menu (Esc in game, or Start + Insert coin together)
 ----------------------------------------------------
 Play          Start / resume, reset, save state, load state, the save state slot
@@ -30,6 +41,8 @@ Graphics      Display mode (windowed / fullscreen / fullscreen exclusive),
               beside the picture during play, with the enemies the game keeps
               there, also after a death or a pipe; other screens get black bars,
               nothing is stretched),
+              graphics (Arcade / All-Stars: shown once the All-Stars ROM is
+              chosen on the ROM tab),
               colors (Arcade: the cabinet's RGB monitor / NES: the colours the
               console version shows), filter (nearest / linear / sharp),
               shader (off / scanlines / CRT / CRT curved / glow) and its strength,
@@ -50,7 +63,7 @@ Cabinet       The board's DIP switches:
               The board reads its switches when it starts: in the launcher a
               change applies at once, during a game at the next reset
               (Play > Reset game, or Ctrl+R).
-ROM           Choose or change the dump
+ROM           Choose or change the dump; choose the All-Stars ROM (remastered graphics)
 Updates       This program's version; check for a newer one and install it (below)
 
 Default keys

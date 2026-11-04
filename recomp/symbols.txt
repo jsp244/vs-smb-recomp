@@ -8,3 +8,4 @@
 90BB JumpEngine
 965C InitializeArea hook   ; an area starts (from its halfway or entrance page too); widescreen.c re-runs it a page earlier
 ADAB GameEngine hook   ; the frame's object logic and sprite building; widescreen.c re-runs it beside the screen
+A2D7 AreaParserCore hook   ; one metatile column of the level; allstars.c parses the same column with All-Stars' parser

@@ -41,6 +41,7 @@
  * OAM was DMA'd at that frame's end.
  */
 #include "widescreen.h"
+#include "allstars.h"
 #include "nes.h"
 #include <limits.h>
 #include <string.h>
@@ -64,6 +65,7 @@
 #define AREA_INIT           0x965C     /* InitializeArea: sets the parser up to draw the area from a start page */
 #define AREA_START_PAGE     0x9681     /* its STA ScreenLeft_PageLoc, with the start page in A */
 #define PARSER_TASK         0xA18B     /* AreaParserTaskHandler: one task; 8 of them render a 32-pixel column set */
+#define PARSER_CORE         0xA2D7     /* AreaParserCore: one column of metatiles (allstars.c follows it) */
 #define SANDBOX_RETURN      0x0000     /* a call made in the sandbox returns here */
 #define CAMERA_SHIFT 112               /* objects up to 128 px beside the screen land well inside the moved one */
 #define EDGE 8                         /* the sprite columns the game hides at each edge */
@@ -96,6 +98,7 @@ static uint32_t copy_gen;
 
 static void engine_hook(uint16_t pc) {
     engine_copy_t *s;
+    allstars_hook(pc);   /* the remastered graphics follow the same instructions */
     if (pc == ENGINE_START) s = &copies[ppu.frame & 3];
     else if (pc == AREA_INIT) s = &area_copy;
     else return;
@@ -113,6 +116,7 @@ void widescreen_attach(void) {
         sys.hook = engine_hook;
         sys.hook_pc[0] = ENGINE_START;
         sys.hook_pc[1] = AREA_INIT;
+        sys.hook_pc[2] = PARSER_CORE;
     } else if (sys.hook == engine_hook) {
         sys.hook = NULL;
     }
@@ -135,6 +139,14 @@ static const engine_copy_t *shown_copy(int exact) {
     if (!exact && s->valid && s->frame == ppu.frame) return s;
     return NULL;
 }
+
+const uint8_t *widescreen_shown_ram(int *ahead) {
+    const engine_copy_t *s = shown_copy(0);
+    if (ahead) *ahead = s && s->frame == ppu.frame;
+    return s ? s->ram : NULL;
+}
+
+int widescreen_level_window(int *lo, int *hi);
 
 /* the 64 sprites that run builds with the camera moved dx pixels to the right; 0 if unavailable */
 static int engine_oam(int dx, uint8_t oam[256], int exact) {
@@ -160,6 +172,12 @@ static int engine_oam(int dx, uint8_t oam[256], int exact) {
     cache[slot].gen = s->gen; cache[slot].dx = dx; cache[slot].ok = ok;
     memcpy(cache[slot].oam, oam, 256);
     return ok;
+}
+
+int widescreen_band_oam(int side, uint8_t oam[256], int *dx) {
+    if (!widescreen_sprites) return 0;
+    *dx = side ? CAMERA_SHIFT : -CAMERA_SHIFT;
+    return engine_oam(*dx, oam, 0);
 }
 
 /* ---- the page before an area's start page ---- */
@@ -258,6 +276,8 @@ static void frame_area(int level) {
 
 /* the picture's columns [lo, hi) that hold the level (lo < 0 and hi > 256 reach into the bands);
    0 when this frame shows no level */
+static int level_window(int *lo, int *hi);
+int widescreen_level_window(int *lo, int *hi) { return level_window(lo, hi); }
 static int level_window(int *lo, int *hi) {
     int left = ram[RAM_SCREEN_LEFT_PAGE] * 256 + ram[RAM_SCREEN_LEFT_X];
     int front = ram[RAM_PARSER_PAGE] * 256 + ram[RAM_PARSER_COLUMN] * 16;

@@ -7,6 +7,7 @@
 #include "png.h"
 #include "palette.h"
 #include "widescreen.h"
+#include "allstars.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -123,6 +124,18 @@ static void fb_to_rgb(uint8_t *rgb) {
 }
 
 static uint8_t wide_fb[WS_W * WS_H], wide_emph[WS_H];
+static uint32_t as_px[WS_W * WS_H];
+
+/* the remastered picture (allstars.c) as RGB: the PPU's 256x240, or with wide the whole canvas;
+   returns 0 (and writes nothing) when it was not drawn */
+static int allstars_to_rgb(uint8_t *rgb, int wide) {
+    int x0 = wide ? -WS_BAND : 0, w = wide ? WS_W : 256;
+    if (!allstars_render(as_px, w, x0, 0, w, 240)) return 0;
+    for (int i = 0; i < w * 240; i++) {
+        rgb[i * 3] = (uint8_t)(as_px[i] >> 16); rgb[i * 3 + 1] = (uint8_t)(as_px[i] >> 8); rgb[i * 3 + 2] = (uint8_t)as_px[i];
+    }
+    return 1;
+}
 
 /* the whole widescreen canvas (centre = the PPU frame, beside it the level or black) as RGB */
 static int wide_to_rgb(uint8_t *rgb) {
@@ -191,6 +204,10 @@ static void usage(void) {
         "                      of the objects beside the picture) and compare its sprites with the PPU's\n"
         "  --no-ws-sprites     widescreen PNGs without the objects beside the picture\n"
         "  --no-ws-fill        ... and without the page drawn before an area entered part-way\n"
+        "  --allstars ROM      the remastered graphics, from this Super Mario All-Stars ROM\n"
+        "  --allstars-png FILE write the last frame remastered (with --png-every N: FILE.NNNNN.png every N frames;\n"
+        "                      frames it cannot draw are skipped)\n"
+        "  --allstars-wide FILE the same with the widescreen canvas (512x240)\n"
         "  --wav FILE          write audio to a 48 kHz WAV\n"
         "  --trace FILE        write a per-instruction trace (interpreter)\n"
         "  --nestest N         nestest mode: start at $C000 and run N instructions\n"
@@ -205,7 +222,7 @@ static void usage(void) {
 
 int main(int argc, char **argv) {
     const char *rom = NULL, *png = NULL, *wav = NULL, *trace = NULL, *cov = NULL, *hash = NULL, *sav = NULL, *input = NULL, *debug_log = NULL, *ram_dump = NULL, *pal_out = NULL, *wide = NULL;
-    const char *state_save = NULL, *state_load = NULL;
+    const char *state_save = NULL, *state_load = NULL, *as_rom = NULL, *as_png = NULL, *as_wide = NULL, *as_dump = NULL;
     int frames = 600, png_every = 0, ram_dump_every = 0, nestest = 0, blargg = 0, recomp = 0, quiet = 0, trace_start = 0, dip = 0;
     int oam_check = 0, oam_same = 0, oam_differ = 0, oam_none = 0, first_differ = -1;
     double oam_seconds = 0;
@@ -220,6 +237,10 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i], "--ws-oam-check")) oam_check = 1;
         else if (!strcmp(argv[i], "--no-ws-sprites")) widescreen_sprites = false;
         else if (!strcmp(argv[i], "--no-ws-fill")) widescreen_fill = false;
+        else if (!strcmp(argv[i], "--allstars") && i + 1 < argc) as_rom = argv[++i];
+        else if (!strcmp(argv[i], "--allstars-png") && i + 1 < argc) as_png = argv[++i];
+        else if (!strcmp(argv[i], "--allstars-wide") && i + 1 < argc) as_wide = argv[++i];
+        else if (!strcmp(argv[i], "--allstars-dump") && i + 1 < argc) as_dump = argv[++i];
         else if (!strcmp(argv[i], "--dip") && i + 1 < argc) dip = (int)strtol(argv[++i], NULL, 16);
         else if (!strcmp(argv[i], "--poke") && i + 1 < argc) parse_pokes(argv[++i]);
         else if (!strcmp(argv[i], "--palette") && i + 1 < argc) pal_out = argv[++i];
@@ -266,7 +287,12 @@ int main(int argc, char **argv) {
         if (f) fclose(f);
     }
     if (input) load_input_script(input);
-    if (wide || oam_check) widescreen_attach();
+    if (as_rom) {
+        char err[256];
+        if (allstars_load(as_rom, err, sizeof err) != 0) { fprintf(stderr, "All-Stars ROM %s: %s\n", as_rom, err); return 1; }
+        if (!quiet) printf("All-Stars ROM: %s (%s)\n", allstars_name(), allstars_sha1());
+    }
+    if (wide || oam_check || as_rom) widescreen_attach();
 
     if (recomp) {
         if (!recomp_rom_sha1) { fprintf(stderr, "this build has no recompiled code\n"); return 1; }
@@ -354,6 +380,17 @@ int main(int argc, char **argv) {
             fb_to_rgb(rgb);
             png_write_rgb(name, 256, 240, rgb);
         }
+        if ((as_png || as_wide) && png_every && (frame % png_every) == 0) {
+            char name[1100];
+            if (as_png && allstars_to_rgb(rgb, 0)) {
+                snprintf(name, sizeof name, "%s.%05d.png", as_png, frame);
+                png_write_rgb(name, 256, 240, rgb);
+            }
+            if (as_wide && allstars_to_rgb(rgb_wide, 1)) {
+                snprintf(name, sizeof name, "%s.%05d.png", as_wide, frame);
+                png_write_rgb(name, WS_W, WS_H, rgb_wide);
+            }
+        }
         if (wide && png_every && (frame % png_every) == 0) {
             char name[1100];
             snprintf(name, sizeof name, "%s.%05d.png", wide, frame);
@@ -381,6 +418,9 @@ int main(int argc, char **argv) {
     }
 
     if (png) { fb_to_rgb(rgb); png_write_rgb(png, 256, 240, rgb); }
+    if (as_png && !png_every) { if (allstars_to_rgb(rgb, 0)) png_write_rgb(as_png, 256, 240, rgb); else printf("allstars: the last frame was not drawn remastered\n"); }
+    if (as_wide && !png_every) { if (allstars_to_rgb(rgb_wide, 1)) png_write_rgb(as_wide, WS_W, WS_H, rgb_wide); }
+    if (as_dump) allstars_debug_dump(as_dump);
     if (wide) {
         /* the centre of the canvas must be the normal frame, pixel for pixel, except in the 8-pixel columns
            at its edges, where the sprite columns the game hides are drawn back */

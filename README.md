@@ -49,6 +49,26 @@ this game: its four level palettes give exactly the NES version's colours), so
 *Arcade (RGB monitor)* is what the cabinet showed. *NES (composite)* maps each colour
 to the NES console's composite palette instead.
 
+**Remastered graphics (Super Mario All-Stars).** With your own *Super Mario All-Stars*
+ROM (SNES, USA; also the Wii and Switch Online copies of it) the game can be shown with
+the graphics of All-Stars' Super Mario Bros.: on the ROM tab "Choose All-Stars ROM..."
+(or drop the `.sfc` onto the window, or `--allstars FILE`), then **Graphics > Graphics:
+Arcade / All-Stars**. The ROM is hash-checked and remembered; nothing from it is stored
+anywhere but in memory. The picture is drawn by All-Stars' own code, running in a small
+SNES sandbox: its start-up, its InitializeArea and area graphics setup, and its area
+parser, fed VS.'s own level data column by column, so the blocks, pipes, castles and
+scenery are All-Stars' choice for VS.'s levels (VS.'s own levels too), with the parallax
+hills and clouds, the sky gradient, the animated tiles, the status bar in All-Stars'
+font, the intermission with its world picture, and All-Stars' sprites and palettes for
+the player (fire, Luigi, the star's cycle), enemies, items, fireballs, coins, hammers
+and blocks. What All-Stars has no art for is drawn the way All-Stars would have it: the
+title's banner is All-Stars' with "VS." in front (its S and dot, and a V made from its
+U by the rule that makes the arcade's V from the arcade's U), the coin, credit,
+PUSH BUTTON, continue and game-over screens use All-Stars' backdrop and font, and the
+cabinet's buttons and the continue timer's box are the arcade's pixels lit and
+outlined in All-Stars' manner. The widescreen views work with it (the objects beside
+the picture included).
+
 Options (all saved to `vssmb.ini`): windowed / fullscreen / exclusive fullscreen, a
 resolution list built from the display's own modes plus 1920x1080 and 3840x2160,
 window size 1x-6x, scaling (integer / fit / stretch), aspect ratio (square pixels 8:7,
@@ -129,16 +149,31 @@ Verified (headless harness with scripted input and RAM pokes, screenshots inspec
   unchanged; seams checked at both edges (Goombas, Koopas, Buzzy Beetles, a Blooper,
   Piranha Plants); the page before a halfway respawn drawn into the left band
 
+* the remastered graphics, compared frame by frame with the arcade picture in all 32
+  levels (each started by poking the world, level and area; star power and run-and-jump
+  input): the overworld by day, night and snow, underground, underwater, the castles
+  (lava, fire bars, lifts), the treetop and mushroom levels, Lakitu, Bullet Bill and
+  Hammer Bro stages; the title with its banner and the demo scrolling it away, the
+  PUSH BUTTON, intermission, game-over and continue screens; 16:9 with the objects
+  beside the picture; the intermission compared with All-Stars' own (run in a reference
+  emulator)
+
 Not yet verified: a full play-through to the ending by a person, the name entry for a
-top score, and two-player games beyond starting one.
+top score, and two-player games beyond starting one. In the remastered graphics: the
+flagpole, Bowser's bridge and the ending, vines and springboards, and the cloud lifts of
+the coin heavens (their sprites are mapped by the same tables, but no scripted run
+reached them).
 
 ## Legal note
 
-VS. Super Mario Bros. and Super Mario Bros. are trademarks and copyrights of
-Nintendo. You need your own legally obtained dump of the board; the project does not
-include, download or write one. Everything derived from your ROM (the generated C,
-disassembly listings, builds, saves) stays on your machine. Do not redistribute
-`generated/` or the built executable, since those contain the recompiled game.
+VS. Super Mario Bros., Super Mario Bros. and Super Mario All-Stars are trademarks and
+copyrights of Nintendo. You need your own legally obtained dump of the board; the
+project does not include, download or write one. Everything derived from your ROM (the
+generated C, disassembly listings, builds, saves) stays on your machine. Do not
+redistribute `generated/` or the built executable, since those contain the recompiled
+game. The same holds for the All-Stars ROM of the remastered graphics: it is read at
+run time from your file and kept in memory only; the repository holds no data from it,
+only addresses in its program and the rules that combine its art.
 
 ## Building
 
@@ -308,6 +343,11 @@ Save states go to `saves/<rom name>.state1` .. `.state9`.
 * `frontend/sdl_main.c` is the player: window, audio, input and the cabinet's
   controls, saves, states, rewind, shaders; `frontend/updater.c` is the Updates tab,
   over `frontend/http.c` (WinHTTP, libcurl loaded at run time, or Java on Android).
+* the remastered graphics: `runtime/allstars.c` runs Super Mario All-Stars' own code
+  (start-up, area setup, area parser, the intermission's and the title's drawing) in a
+  sandbox SNES made of `runtime/cpu816.c` (a 65C816) and `runtime/snesppu.c` (a
+  mode 0/1 line renderer with windows and colour math), in step with VS.'s parser, and
+  draws each frame from that SNES state, VS.'s camera, block buffer, OAM and nametables.
 
 Details are in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
@@ -337,7 +377,10 @@ The headless harness (`build/nes-headless --help`) scripts input
 (`--keys "300:COIN;304:-;400:SELECT"`; `2A`, `2SELECT` ... for the second controller),
 sets DIP switches (`--dip 07` = free play), writes memory before a frame (`--poke
 "405:75F=3,760=0"`), dumps PNG screenshots every N frames, writes WAV audio, records
-coverage (`--coverage FILE`), traces every instruction and dumps RAM.
+coverage (`--coverage FILE`), traces every instruction and dumps RAM. With `--allstars
+ROM` it also writes the remastered picture (`--allstars-png FILE`, `--allstars-wide FILE`
+for the widescreen canvas; numbered with `--png-every`) and can dump the SNES sandboxes
+(`--allstars-dump PREFIX`: work RAM, VRAM, CGRAM, OAM, registers, the parsed columns).
 
 ## Repository layout
 

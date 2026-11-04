@@ -16,7 +16,9 @@
 
 int file_dialog_available(void) { return 1; }
 
-int file_dialog_open(SDL_Window *parent, char *out, size_t out_len) {
+int file_dialog_open(SDL_Window *parent, char *out, size_t out_len) { return file_dialog_open_kind(parent, FILE_KIND_DUMP, out, out_len); }
+
+int file_dialog_open_kind(SDL_Window *parent, int kind, char *out, size_t out_len) {
     HWND owner = NULL;
     if (parent) {
         SDL_SysWMinfo info;
@@ -28,10 +30,15 @@ int file_dialog_open(SDL_Window *parent, char *out, size_t out_len) {
     memset(&ofn, 0, sizeof ofn);
     ofn.lStructSize = sizeof ofn;
     ofn.hwndOwner = owner;
-    ofn.lpstrFilter = L"VS. Super Mario Bros. dump (*.nes, MAME *.zip)\0*.nes;*.zip\0All files (*.*)\0*.*\0";
+    if (kind == FILE_KIND_ALLSTARS) {
+        ofn.lpstrFilter = L"Super Mario All-Stars ROM (*.sfc, *.smc)\0*.sfc;*.smc\0All files (*.*)\0*.*\0";
+        ofn.lpstrTitle = L"Select your own Super Mario All-Stars ROM (SNES, USA)";
+    } else {
+        ofn.lpstrFilter = L"VS. Super Mario Bros. dump (*.nes, MAME *.zip)\0*.nes;*.zip\0All files (*.*)\0*.*\0";
+        ofn.lpstrTitle = L"Select your own VS. Super Mario Bros. dump (.nes or MAME suprmrio.zip)";
+    }
     ofn.lpstrFile = buf;
     ofn.nMaxFile = (DWORD)(sizeof buf / sizeof buf[0]);
-    ofn.lpstrTitle = L"Select your own VS. Super Mario Bros. dump (.nes or MAME suprmrio.zip)";
     ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR | OFN_HIDEREADONLY;
     if (!GetOpenFileNameW(&ofn)) return 0;
     if (WideCharToMultiByte(CP_UTF8, 0, buf, -1, out, (int)out_len, NULL, NULL) == 0) return 0;
@@ -44,11 +51,13 @@ int file_dialog_open(SDL_Window *parent, char *out, size_t out_len) {
 
 int file_dialog_available(void) { return 1; }
 
+int file_dialog_open(SDL_Window *parent, char *out, size_t out_len) { return file_dialog_open_kind(parent, FILE_KIND_DUMP, out, out_len); }
+
 /* The activity shows the document picker, copies the chosen file into the app's storage and
-   hands its path over as a drop event, which the main loop already treats as "load this ROM".
-   Nothing is chosen yet when this returns. */
-int file_dialog_open(SDL_Window *parent, char *out, size_t out_len) {
-    (void)parent; (void)out; (void)out_len;
+   hands its path over as a drop event, which the main loop already treats as "load this ROM"
+   (the board's dump or, by its size, the All-Stars ROM). Nothing is chosen yet when this returns. */
+int file_dialog_open_kind(SDL_Window *parent, int kind, char *out, size_t out_len) {
+    (void)parent; (void)kind; (void)out; (void)out_len;
     JNIEnv *env = (JNIEnv *)SDL_AndroidGetJNIEnv();
     jobject activity = (jobject)SDL_AndroidGetActivity();
     if (!env || !activity) return 0;
@@ -89,12 +98,25 @@ int file_dialog_available(void) {
 #endif
 }
 
-int file_dialog_open(SDL_Window *parent, char *out, size_t out_len) {
+int file_dialog_open(SDL_Window *parent, char *out, size_t out_len) { return file_dialog_open_kind(parent, FILE_KIND_DUMP, out, out_len); }
+
+int file_dialog_open_kind(SDL_Window *parent, int kind, char *out, size_t out_len) {
     (void)parent;
 #ifdef __APPLE__
+    if (kind == FILE_KIND_ALLSTARS)
+        return run_capture("osascript -e 'POSIX path of (choose file with prompt \"Select your Super Mario All-Stars ROM\")' 2>/dev/null",
+                           out, out_len);
     return run_capture("osascript -e 'POSIX path of (choose file with prompt \"Select your VS. Super Mario Bros. dump\")' 2>/dev/null",
                        out, out_len);
 #else
+    if (kind == FILE_KIND_ALLSTARS) {
+        if (have_cmd("zenity"))
+            return run_capture("zenity --file-selection --title='Select your Super Mario All-Stars ROM' "
+                               "--file-filter='Super Mario All-Stars ROM (*.sfc, *.smc) | *.sfc *.smc' --file-filter='All files | *' 2>/dev/null", out, out_len);
+        if (have_cmd("kdialog"))
+            return run_capture("kdialog --getopenfilename . 'Super Mario All-Stars ROM (*.sfc *.smc)' 2>/dev/null", out, out_len);
+        return 0;
+    }
     if (have_cmd("zenity"))
         return run_capture("zenity --file-selection --title='Select your VS. Super Mario Bros. dump' "
                            "--file-filter='VS. Super Mario Bros. dump (*.nes, *.zip) | *.nes *.zip' --file-filter='All files | *' 2>/dev/null", out, out_len);

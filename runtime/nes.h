@@ -255,7 +255,7 @@ typedef struct {
     /* called just before an instruction at hook_pc[] runs, by the interpreter and by the recompiled
        code (the instructions recomp/symbols.txt marks "hook"); it may look at the machine, never change it */
     void   (*hook)(uint16_t pc);
-    uint16_t hook_pc[2];
+    uint16_t hook_pc[3];
     bool     sandbox;           /* cpu_sandbox_run is running: hardware writes are dropped, reads refused, no time passes */
     bool     sandbox_fault;     /* the sandboxed code tried to read the hardware */
     bool     coverage;
@@ -286,6 +286,9 @@ const char *cart_known_name(void);   /* "VS. Super Mario Bros." etc. for known d
 size_t cart_battery_size(void);       /* bytes of battery RAM for the loaded cartridge */
 #include <stdio.h>
 FILE *nes_fopen(const char *path, const char *mode);  /* UTF-8 path aware fopen */
+void rom_sha1(const uint8_t *data, size_t len, uint8_t out[20]);   /* the hashes of the ROM checks */
+void rom_md5(const uint8_t *data, size_t len, uint8_t out[16]);
+uint32_t rom_crc32(const uint8_t *data, size_t len);
 
 /* mapper.c */
 void    mapper_init(void);

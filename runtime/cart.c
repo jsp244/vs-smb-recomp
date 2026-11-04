@@ -32,7 +32,7 @@ FILE *nes_fopen(const char *path, const char *mode) {
 /* ---- SHA-1 (small, self-contained) ---- */
 static uint32_t rol32(uint32_t v, int n) { return (v << n) | (v >> (32 - n)); }
 
-static void sha1(const uint8_t *data, size_t len, uint8_t out[20]) {
+void rom_sha1(const uint8_t *data, size_t len, uint8_t out[20]) {
     uint32_t h0 = 0x67452301, h1 = 0xEFCDAB89, h2 = 0x98BADCFE, h3 = 0x10325476, h4 = 0xC3D2E1F0;
     size_t total = len + 1;
     size_t padded = ((total + 8 + 63) / 64) * 64;
@@ -68,7 +68,7 @@ static void sha1(const uint8_t *data, size_t len, uint8_t out[20]) {
 }
 
 /* ---- MD5 (RFC 1321) ---- */
-static void md5(const uint8_t *data, size_t len, uint8_t out[16]) {
+void rom_md5(const uint8_t *data, size_t len, uint8_t out[16]) {
     static const uint8_t R[64] = { 7,12,17,22,7,12,17,22,7,12,17,22,7,12,17,22, 5,9,14,20,5,9,14,20,5,9,14,20,5,9,14,20,
                                    4,11,16,23,4,11,16,23,4,11,16,23,4,11,16,23, 6,10,15,21,6,10,15,21,6,10,15,21,6,10,15,21 };
     static uint32_t K[64];
@@ -107,7 +107,7 @@ static void md5(const uint8_t *data, size_t len, uint8_t out[16]) {
     for (int i = 0; i < 4; i++) for (int j = 0; j < 4; j++) out[i * 4 + j] = (uint8_t)(h[i] >> (8 * j));
 }
 
-static uint32_t crc32_calc(const uint8_t *d, size_t n) {
+uint32_t rom_crc32(const uint8_t *d, size_t n) {
     uint32_t c = 0xFFFFFFFFu;
     for (size_t i = 0; i < n; i++) {
         c ^= d[i];
@@ -194,11 +194,11 @@ int cart_load(const char *path) {
         cart.chr = malloc(cart.chr_size);
         memcpy(cart.chr, data + off + cart.prg_size, cart.chr_size);
     }
-    sha1(data + off, cart.prg_size + cart.chr_size, cart.sha1);
+    rom_sha1(data + off, cart.prg_size + cart.chr_size, cart.sha1);
     for (int i = 0; i < 20; i++) sprintf(cart.sha1_hex + i * 2, "%02x", cart.sha1[i]);
-    md5(data + off, cart.prg_size + cart.chr_size, cart.md5);
+    rom_md5(data + off, cart.prg_size + cart.chr_size, cart.md5);
     for (int i = 0; i < 16; i++) sprintf(cart.md5_hex + i * 2, "%02x", cart.md5[i]);
-    cart.crc32 = crc32_calc(data + off, cart.prg_size + cart.chr_size);
+    cart.crc32 = rom_crc32(data + off, cart.prg_size + cart.chr_size);
     free(data);
 
     /* MMC6: NES 2.0 submapper 1 of mapper 4 */
