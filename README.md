@@ -178,7 +178,14 @@ Verified (headless harness with scripted input and RAM pokes, screenshots inspec
   Hammer Bro stages; the title with its banner and the demo scrolling it away, the
   PUSH BUTTON, intermission, game-over and continue screens; 16:9 with the objects
   beside the picture and the walk into the left band; the intermission compared with
-  All-Stars' own (run in a reference emulator). The emulation is untouched by it: per-frame
+  All-Stars' own (run in a reference emulator); the level ends and the objects All-Stars
+  draws its own way, each reached with RAM pokes (a start page, star power, an object
+  spawned) and compared with All-Stars in the reference emulator: the goal flag, the
+  castle's star flag and fireworks, Bowser walking, breathing fire and falling upside
+  down, his flame, the castle's end with Toad's sack (1-4) and the princess (8-4),
+  Podoboos, Bullet Bills, shells still and kicked, a vine, the cloud lift, springboards,
+  Bloopers, Cheep-cheeps, Hammer Bros, Lakitu and Spinies, defeated enemies falling upside
+  down, the water's surface. The emulation is untouched by it: per-frame
   state hashes are identical with and without it (and with the band walk), and the
   frontend self-tests pass with it on. The Linux build draws it pixel for pixel as the
   Windows build does; on the Steam Deck (offscreen, in a scratch folder) the Deck build
@@ -189,10 +196,10 @@ Verified (headless harness with scripted input and RAM pokes, screenshots inspec
   emulation itself 2.3 ms there), well inside a 60 Hz frame
 
 Not yet verified: a full play-through to the ending by a person, the name entry for a
-top score, and two-player games beyond starting one. In the remastered graphics: the
-flagpole, Bowser's bridge and the ending, vines and springboards, and the cloud lifts of
-the coin heavens (their sprites are mapped by the same tables, but no scripted run
-reached them), and a real window on the Deck in Game Mode.
+top score, and two-player games beyond starting one. In the remastered graphics: a
+coin heaven itself (the cloud lift was checked on a lift drawn as one), Toad's scenes
+in worlds 2-7 (All-Stars' own code runs them, as it does world 1's, which was checked),
+and a real window on the Deck in Game Mode.
 
 ## Legal note
 

@@ -307,9 +307,9 @@ All-Stars' beside it). VS.'s demo, for one, carries on from the title's columns.
 
 **A frame.** Layer 1 is the parsed columns as All-Stars' map16 words, with the blocks
 VS. changes during play (its block buffer) put in; layer 2 is All-Stars' hills from its
-RAM pages at half the camera's speed; layer 3 its clouds at a quarter, below the
-status bar's IRQ split, and above it the status bar from VS.'s nametable in
-All-Stars' font. The sky's gradient is the sandbox's HDMA, replayed line by line; the
+RAM pages at half the camera's speed; layer 3 its clouds at a quarter above ground (under
+water the surface's waves, elsewhere nothing), below the status bar's IRQ split, and
+above it the status bar from VS.'s nametable in All-Stars' font. The sky's gradient is the sandbox's HDMA, replayed line by line; the
 animated tiles (? blocks, coins, bushes, water, lava) are All-Stars' frames at VS.'s
 frame counter. Sprites come from VS.'s OAM, attributed to their owners by VS.'s
 sprite-data offsets (the copy of RAM the engine built them from, with one shuffler
@@ -317,10 +317,19 @@ step undone when that copy is a frame ahead): the player's 8 sprites become
 All-Stars' frame for the same pose (8 tiles per pose in bank $0A, Luigi's $4000
 further) in All-Stars' colours (Mario, Luigi, fiery, the star's 4-set cycle); enemies
 keep the NES tile numbers, which All-Stars mostly kept, with the tiles it moved found
-by comparing the two enemy graphics tables, and get All-Stars' palette for their
-type; fireballs, fire bars, explosions, jumping coins, hammers, bubbles, lifts and
-bouncing blocks get the tiles, palettes and 16x16 sizes All-Stars' own handlers use
-(the constants are noted at each in the code). `snesppu.c` then draws mode 1 with
+by comparing the two enemy graphics tables (upside down, VS.'s rows swapped back
+first), and get All-Stars' palette for their type; fireballs, fire bars, explosions,
+jumping coins, hammers, bubbles, lifts and bouncing blocks get the tiles, palettes and
+16x16 sizes All-Stars' own handlers use (the constants are noted at each in the code).
+The objects All-Stars draws with routines of its own instead of its table are drawn
+as those routines do, placed from any of the object's arcade sprites: the goal flag,
+the castle's star flag, Bowser (one figure for both halves), his flame and its sparks,
+Bullet Bills, Podoboos, shells still and kicked, the vine, the coin heavens' cloud
+lift and fireworks. At a castle's end All-Stars' own retainer code runs in a copy of
+the area's sandbox once a frame (Toad tied up in a sack that wobbles, then its scene
+for each world), with VS.'s Toad, camera and frame counter, and its sprites are drawn;
+the princess stands as All-Stars draws her. VictoryMode runs no GameEngine, so there
+the owners come from RAM, a shuffler step ahead. `snesppu.c` then draws mode 1 with
 All-Stars' priorities, windows and colour math (layers 2 and 3 on the subscreen,
 added to the backdrop). In the widescreen canvas the frame is drawn in three parts,
 the bands with the sprites the game builds there (`widescreen_band_oam`: the same

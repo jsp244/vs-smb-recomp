@@ -91,6 +91,20 @@ static struct {
 #define AREA_PTR_HI      0x04C1B6
 #define PLAYER_COLORS    0x0499FD   /* the player's 16 colours: Mario, Luigi, then fiery Mario and Luigi ($20 bytes each) */
 #define STAR_COLORS      0x05ED40   /* the star's cycle: 4 sets of 16 colours, Luigi's a set later */
+#define BOWSER_TILES     0x05CF20   /* Bowser's 7 frames of 6 tiles facing right, then the 7 facing left ($05:D055) */
+#define FLAME_TILES      0x05CDE2   /* Bowser's flame: 3 frames ($05:CD01), then its spark's 3 */
+#define BULLET_TILES     0x05CB38   /* a Bullet Bill's 10 frames ($05:CB42) */
+#define SHELL_TILES      0x05E9E8   /* shells: 4 turns of 2x2 tiles, Koopas', Buzzy Beetles', then upside down ($05:E879) */
+#define SHELL_FLIPS      0x05EA28   /* the turns' mirroring */
+#define CLOUD_TILES      0x05CEDB   /* the cloud lift: 4 frames of 8 tiles, their attributes and places ($05:CDEB) */
+#define CLOUD_ATTRS      0x05CEFB
+#define CLOUD_X          0x05CF1B
+#define PRINCESS_TILES   0x04DD4E   /* the princess's poses ($04:DCBB) */
+#define FIREWORK_TILES   0x03F53B   /* a firework's 4 rings ($03:F548), then the palettes it cycles through */
+#define FIREWORK_PALS    0x03F53F
+#define RETAINER_GFX     0x1EC000   /* the sack's OBJ tiles, then the princess's ($04:ECCA) */
+#define RETAINER_SETS    0x04ED5A   /* each world's second set: Toad's ($04:ED07) */
+#define RETAINER_DRAW    0x04ED7A   /* Toad's sack, then each world's scene */
 #define PLAYER_FRAMES    0x0A8000   /* 256 bytes (8 tiles) per pose number / 8; Luigi +$4000 */
 #define ENEMY_ATTR       0x03EEA9   /* sprite attributes per enemy type */
 #define ENEMY_GFX        0x03ED8C   /* EnemyGraphicsTable: 6 tiles per frame, NES numbers mostly */
@@ -981,7 +995,20 @@ static void write_bg2(int scroll, int x0, int w) {
 }
 
 /* layer 3's clouds: All-Stars keeps them as 16x16 tiles at $7F3000 (pages of 16 x 14, $E0 bytes, 12
-   pages) and the tilemap words of each at BG3_MAP16; rows 0-3 of the tilemap are the status bar */
+   pages) and the tilemap words of each at BG3_MAP16; rows 0-3 of the tilemap are the status bar. Only
+   areas above ground have them ($04:8B63); under water the layer has the surface's waves in its row 4,
+   written with the level's columns ($04:8C28), elsewhere nothing */
+static void write_bg3_plain(int water) {
+    uint8_t *v = sb->ppu.vram;
+    static const uint8_t wave[4] = { 0x2E, 0x2F, 0x2C, 0x2D };
+    for (int ty = 4; ty < 32; ty++)
+        for (int tx = 0; tx < 64; tx++) {
+            uint16_t word = water && ty == 4 ? (uint16_t)(0x2C00 | wave[tx & 3]) : rom16(BG3_MAP16 + (uint32_t)(((tx & 1) << 1) | (ty & 1)) * 2);
+            uint32_t a = ((uint32_t)(0x5800 + (tx >> 5) * 0x400 + ty * 32 + (tx & 31)) & 0x7FFF) * 2;
+            v[a] = (uint8_t)word; v[a + 1] = (uint8_t)(word >> 8);
+        }
+}
+
 static void write_bg3_clouds(int scroll, int x0, int w) {
     uint8_t *v = sb->ppu.vram;
     const uint8_t *m16 = &sb->wram[0x13000];
@@ -1174,6 +1201,269 @@ static int powerup_pal(const uint8_t *r) {
 
 /* the sprite list from an OAM: the PPU's (dx 0, real NULL), or one the game built beside the picture
    (widescreen_band_oam), whose entries equal to the PPU's own are the picture's and left out */
+static void add_sprite(snesppu_t *p, int x, int y, uint16_t tile, int large, int vf, int hf, int prio, int pal) {
+    if (p->nspr >= (int)(sizeof p->spr / sizeof p->spr[0])) return;
+    snes_sprite_t *s = &p->spr[p->nspr++];
+    s->x = (int16_t)x; s->y = (int16_t)y; s->tile = tile; s->large = (uint8_t)large;
+    s->attr = (uint8_t)((vf << 7) | (hf << 6) | (prio << 4) | (pal << 1));
+}
+
+/* the arcade's sprite at OAM entry i of oam, if it is drawn: one of the picture's, or (with real, the
+   PPU's own OAM) one the game built beside the picture that the picture does not have */
+static int sprite_shown(const uint8_t *oam, int i, int dx, const uint8_t *real) {
+    const uint8_t *o = &oam[i * 4];
+    if (owner[i] == OWN_NONE || o[0] >= 0xEF) return 0;
+    if (real) {
+        const uint8_t *q = &real[i * 4];
+        if (!memcmp(o, q, 4)) return 0;
+        /* the player, wrapped round the moved screen's 8-bit X (widescreen.c's draw_sprites) */
+        if (q[0] < 0xEF && o[0] == q[0] && o[1] == q[1] && o[2] == q[2] && o[3] + dx != q[3]) return 0;
+    }
+    return 1;
+}
+
+/* Objects All-Stars draws with routines of its own instead of its enemy table, each from one corner of
+   the object, which any of its arcade sprites gives (they sit at fixed offsets from it):
+   - the goal flag: one waving 16x16 sprite 16 pixels right of the NES's three ($05:EAA0);
+   - the star flag over the castle: one 16x16 sprite behind the background ($03:D84C);
+   - Bowser: one 32-pixel figure of four 16x16 and two 8x8 sprites for both halves ($05:D055), facing
+     and upside down as the head is mirrored, the open mouth (tiles $C9/$CA) as its fire frames, the
+     stepping legs ($CB/$CC) as its walking ones;
+   - Bowser's flame: two overlapping 16x16 sprites, 24x16, and a spark it leaves falling ($05:CD01);
+   - Bullet Bills: one 16x16 sprite, the cannon's behind the background as it leaves ($05:CB42);
+   - Podoboos: one 16x16 sprite, upside down when falling ($05:EA38);
+   - shells, kicked or still: tiles of their own, turning when kicked ($05:E879);
+   - the vine: one column of 16x16 sprites as long as it has grown ($05:DA72);
+   - the coin heavens' cloud lift: a 64-pixel cloud (48 in the second quest) with a face ($05:CDEB);
+   - fireworks: a 32-pixel ring of sparks, four mirrored 16x16 quarters changing colour every frame
+     ($03:F548);
+   - Toad and the princess: see draw_retainer. */
+enum { SP_NONE, SP_FLAG, SP_STARFLAG, SP_BOWSER, SP_FLAME, SP_BULLET, SP_PODOBOO, SP_SHELL, SP_VINE, SP_CLOUD, SP_FIREWORK, SP_RETAINER };
+struct special { int kind, seen, x, y, pal, hf, vf, behind, mouth, legs, done; };
+
+/* the kind of special object enemy slot e is, and the place of its arcade sprite k in it */
+static int special_kind(const uint8_t *r, int e, int k, uint8_t tile, int *ox, int *oy) {
+    uint8_t id = r[0x16 + e] & 0x3F, state = r[0x1E + e];
+    *ox = (k & 1) * 8; *oy = (k >> 1) * 8;                              /* EnemyGfxHandler's 2x3 block */
+    switch (id) {
+    case 0x30: if (k >= 3) return SP_NONE; *ox = k ? 8 : 0; *oy = k == 2 ? 8 : 0; return SP_FLAG;    /* $7E $7F / . $7E */
+    case 0x31: if (k >= 4) return SP_NONE; *ox = (k & 1) ? 0 : 8; *oy = k < 2 ? 8 : 0; return SP_STARFLAG;
+    case 0x2D: return SP_BOWSER;
+    case 0x15: if (k >= 3) return SP_NONE; *ox = k * 8; *oy = 0; return SP_FLAME;
+    case 0x08: case 0x33: return SP_BULLET;
+    case 0x0C: return SP_PODOBOO;
+    case 0x35: return SP_RETAINER;
+    case 0x16: if (k >= 4) return SP_NONE; *ox = (k >> 1) * 8 - 4; *oy = (k & 1) * 8 - 4; return SP_FIREWORK;   /* round its centre */
+    case 0x2F:   /* a piece of vine (VineObjOffset): 6 sprites down from Enemy_Rel_YPos + $00 or $30, every other one 6 right */
+        for (int y = 0; y < 2 && y < r[0x0398]; y++)
+            if (r[0x039A + y] == e) { *ox = (k & 1) * 6; *oy = y * 0x30 + k * 8; return SP_VINE; }
+        return SP_NONE;
+    }
+    if (id < 4 && ((state & 0x80) || state == 2 || state == 3 || state == 4)) return SP_SHELL;
+    if (id >= 0x24 && id <= 0x2A && tile == 0x75 && r[0x0743]) { *ox = k * 8; *oy = 0; return SP_CLOUD; }   /* CloudTypeOverride */
+    return SP_NONE;
+}
+
+static void special_objects(const uint8_t *r, const uint8_t *oam, int dx, const uint8_t *real, struct special sp[6]) {
+    memset(sp, 0, sizeof(struct special) * 6);
+    if (!r) return;
+    for (int i = 0; i < 64; i++) {
+        if (owner[i] != OWN_ENEMY || !sprite_shown(oam, i, dx, real)) continue;
+        const uint8_t *o = &oam[i * 4];
+        int e = owner_slot[i] & 15, ox, oy, kind = special_kind(r, e, owner_slot[i] >> 4, o[1], &ox, &oy);
+        if (kind == SP_NONE) continue;
+        struct special *s = &sp[e];
+        if (!s->seen) {
+            s->seen = 1; s->kind = kind; s->x = o[3] + dx - ox; s->y = o[0] - oy;
+            s->pal = o[2] & 3; s->behind = (o[2] >> 5) & 1;
+        }
+        s->hf |= (o[2] >> 6) & 1;
+        s->vf |= (o[2] >> 7) & 1;
+        s->mouth |= o[1] == 0xC9 || o[1] == 0xCA;
+        s->legs |= o[1] == 0xCB || o[1] == 0xCC;
+    }
+}
+
+static void draw_bowser(snesppu_t *p, const uint8_t *r, struct special sp[6]) {
+    int front = r[0x0368] < 6 && (r[0x16 + r[0x0368]] & 0x3F) == 0x2D ? r[0x0368] : -1, rear = -1;
+    for (int e = 0; e < 6; e++)
+        if ((r[0x16 + e] & 0x3F) == 0x2D && e != front) { if (front < 0) front = e; else if (rear < 0) rear = e; }
+    if (front < 0) return;
+    struct special *f = &sp[front], *b = rear >= 0 ? &sp[rear] : NULL;
+    if (!f->seen && !(b && b->seen)) return;
+    int left = f->seen ? f->hf : b->hf;   /* facing left: the head at the left, the NES mirrors it */
+    int x0, y0;
+    if (f->seen) { x0 = left ? f->x : f->x - 16; y0 = f->y; }
+    else { x0 = left ? b->x - 16 : b->x; y0 = b->y - 8; }
+    int upside = f->seen ? f->vf : b->vf;
+    uint8_t fc = r[0x09];
+    int frame = f->mouth ? 5 + ((fc >> 2) & 1) : (b && b->legs) ? ((fc & 0x20) ? 2 : 1) : 0;
+    static const int8_t px[6] = { 0, 0, 8, 16, 16, 16 }, py[6] = { 0, 16, -8, 0, 16, -8 }, py_up[6] = { 8, -8, 24, 8, -8, 24 };
+    for (int j = 0; j < 6; j++) {
+        uint16_t t = (uint16_t)(0x100 | rom8(BOWSER_TILES + (uint32_t)((left ? 42 : 0) + frame * 6 + j)));
+        add_sprite(p, x0 + px[j], y0 + (upside ? py_up[j] : py[j]) + 1, t, j != 2 && j != 5, upside, left, 2, 0);
+    }
+}
+
+/* The castle's end. All-Stars loads two sets of OBJ tiles there, as $180-$1FF ($04:ECCA, $04:ED07);
+   in worlds 1-7 Toad is tied up in a sack that wobbles ($04:ED7A), and once the player has stood
+   before him for $70 frames ($03:8A55) each world has a scene of its own: the sack opening, Toad
+   sitting up, jumping for joy... VS. goes from the walk straight to the messages, so the wait starts
+   with them. That code runs here in a copy of the area's sandbox, once for each frame since the last
+   picture, given VS.'s Toad, camera, frame counter and random bits; the sprites it writes are drawn,
+   the uploads it asks its NMI for kept. All-Stars' player stops 31 pixels before him ($03:89EA; 16 more
+   in world 3), VS.'s 17, so his scene is moved right by the difference. In world 8 the princess stands
+   ($04:DCBB). */
+static sbx_t *sb_end;
+static struct {
+    int live, n, level;
+    uint64_t frame;
+    uint8_t fc;
+    snes_sprite_t spr[48];
+    uint8_t vram[0x1000];   /* OBJ tiles $180-$1FF */
+} cend;
+
+static void retainer_step(const uint8_t *r, int e) {
+    uint8_t *w = sb_end->wram;
+    int cam = (r[0x071A] << 8) | r[0x071C];
+    int x = ((r[0x6E + e] << 8) | r[0x87 + e]) + 14 + (r[0x075F] == 2 ? 16 : 0);
+    int steps = (uint8_t)(r[0x09] - cend.fc);
+    cend.fc = r[0x09];
+    for (int k = steps - 1; k >= 0; k--) {
+        w[0x09] = (uint8_t)(r[0x09] - k);
+        w[0x07B9] = r[0x07A9]; w[0x07BA] = r[0x07AA];           /* PseudoRandomBitReg, $10 higher */
+        w[0x42] = (uint8_t)cam; w[0x43] = (uint8_t)(cam >> 8);
+        w[0x021A] = (uint8_t)x; w[0x79] = (uint8_t)(x >> 8);    /* its object 0 */
+        w[0x03AE] = (uint8_t)(x - cam);
+        w[0x075F] = r[0x075F]; w[0x0753] = r[0x0753];
+        w[0x9E] = 0;
+        if (!w[0x0F7E] && r[0x0772] >= 3 && ++w[0x0F7F] == 0x70) { w[0x0F7E] = 1; w[0x0F7F] = 0; }
+        for (int i = 0; i < 128; i++) { w[0x0801 + i * 4] = 0xF0; w[0x0C00 + i * 4] = 0; }
+        if (sb_call(sb_end, RETAINER_DRAW, 0, 400000) < 0) { cend.n = 0; return; }
+        if (w[0x0B76]) {   /* an upload for its NMI ($03:9B42) */
+            uint32_t src = ((uint32_t)w[0x0287] << 16) | (uint32_t)(w[0x0285] | (w[0x0286] << 8));
+            unsigned dst = (unsigned)(w[0x028A] | (w[0x028B] << 8)) & 0x7FFF, size = (unsigned)(w[0x0288] | (w[0x0289] << 8));
+            for (unsigned i = 0; i < size; i++) {
+                unsigned b = dst * 2 + i;
+                if (b >= 0xF000 && b < 0x10000) cend.vram[b - 0xF000] = rom8(src + i);
+            }
+            w[0x0B76] = 0;
+        }
+    }
+    cend.n = 0;
+    int rel = x - cam;
+    for (int i = 0; i < 128 && cend.n < (int)(sizeof cend.spr / sizeof cend.spr[0]); i++) {
+        const uint8_t *o = &w[0x0800 + i * 4];
+        if (o[1] == 0xF0) continue;
+        uint8_t sz = w[0x0C00 + i * 4];
+        int sx = o[0] | ((sz & 1) << 8);
+        while (sx < rel - 256) sx += 512;   /* the 9-bit X, beside the picture too */
+        while (sx > rel + 256) sx -= 512;
+        snes_sprite_t *s = &cend.spr[cend.n++];
+        s->x = (int16_t)sx; s->y = (int16_t)(o[1] + 1);
+        s->tile = (uint16_t)(o[2] | ((o[3] & 1) << 8)); s->attr = o[3]; s->large = (uint8_t)((sz >> 1) & 1);
+    }
+}
+
+static void draw_retainer(snesppu_t *p, const uint8_t *r, int e, int x, int y) {
+    int w8 = r[0x075F] == 7;
+    int level = (r[0x075F] << 8) | r[0x075C];
+    if (!cend.live || cend.level != level || ppu.frame - cend.frame > 600) {   /* the scene starts */
+        if (!sb_end && !(sb_end = malloc(sizeof *sb_end))) return;
+        memcpy(sb_end, sb, sizeof *sb);
+        uint8_t *w = sb_end->wram;
+        w[0x0F7D] = w[0x0F7E] = w[0x0F7F] = w[0x0B9C] = w[0x0B76] = 0;
+        w[0x10] = 1; w[0x1C] = 0x35; w[0x29] = 0; w[0xBC] = 1;   /* its object 0: Toad */
+        w[0x0238] = r[0xCF + e];                                  /* his height, All-Stars' own from now on */
+        uint32_t a = RETAINER_GFX + (w8 ? 0x1000u : 0), b = 0x1E0000u | rom16(RETAINER_SETS + r[0x075F] * 2u);
+        for (uint32_t i = 0; i < 0x800; i++) { cend.vram[i] = rom8(a + i); cend.vram[0x800 + i] = rom8(b + i); }
+        cend.live = 1;
+        cend.level = level;
+        cend.fc = (uint8_t)(r[0x09] - 1);
+    }
+    cend.frame = ppu.frame;
+    memcpy(&p->vram[0xF000], cend.vram, sizeof cend.vram);
+    if (w8) {
+        uint16_t t = (uint16_t)(0x100 | rom8(PRINCESS_TILES));
+        add_sprite(p, x + 7, y, t, 1, 0, 0, 2, 2);
+        add_sprite(p, x + 7, y + 16, (uint16_t)(t + 0x20), 1, 0, 0, 2, 2);
+        return;
+    }
+    if (cend.fc != r[0x09]) retainer_step(r, e);
+    for (int n = 0; n < cend.n && p->nspr < (int)(sizeof p->spr / sizeof p->spr[0]); n++) p->spr[p->nspr++] = cend.spr[n];
+}
+
+static void draw_special(snesppu_t *p, const uint8_t *r, int e, const struct special *s) {
+    uint8_t fc = r[0x09], state = r[0x1E + e], id = r[0x16 + e] & 0x3F;
+    int x = s->x, y = s->y + 1;                                         /* the NES shows OAM Y + 1 */
+    switch (s->kind) {
+    case SP_FLAG: {
+        static const uint8_t wave[4] = { 0, 2, 4, 2 };
+        add_sprite(p, x + 16, y, (uint16_t)(0x120 + wave[(fc & 0x18) >> 3]), 1, 0, 0, 2, 5);
+        break;
+    }
+    case SP_STARFLAG:
+        add_sprite(p, x, y, (uint16_t)(0x104 + ((fc & 0x18) >> 2)), 1, 0, 0, 0, 5);
+        break;
+    case SP_FLAME: {
+        /* 3 frames of 8; at each turn it drops a spark where it is, which then falls a pixel every 2
+           frames while the flame moves on left (1 1/4 pixels a frame, 1 3/8 in the second quest) */
+        int t = fc % 24, f = t >> 3, back = t * (r[0x06CC] ? 11 : 10) / 8;
+        uint16_t tile = (uint16_t)(0x100 | rom8(FLAME_TILES + (uint32_t)f));
+        add_sprite(p, x, y, tile, 1, 0, 0, 2, 0);
+        add_sprite(p, x + 8, y, (uint16_t)(tile + 1), 1, 0, 0, 2, 0);
+        add_sprite(p, x + 16 + back, y + 4 + (t >> 1), rom8(FLAME_TILES + 3 + (uint32_t)f), 0, 0, 0, 2, 4);
+        break;
+    }
+    case SP_BULLET: {
+        int f = (state & 0x20) ? 0 : (fc % 37) >> 2;                   /* still once stomped */
+        if (s->y + 8 < 0xE0)
+            add_sprite(p, x, y + 8, rom8(BULLET_TILES + (uint32_t)f), 1, 0, r[0x46 + e] == 2, s->behind ? 0 : 2, 5);
+        break;
+    }
+    case SP_PODOBOO:   /* 3 frames of 8 (its counter, $0E68, wraps at 24) */
+        if (s->y < 0xE8) add_sprite(p, x, y, (uint16_t)(0x162 + (fc % 24 >> 3) * 2), 1, s->vf, 0, 2, 4);
+        break;
+    case SP_SHELL: {
+        int still = state == 2 || state == 3 || state == 4, upside = (state & 0x0F) == 4;
+        int turn = still ? 0 : fc & 0x0C, t0 = turn + (id == 2 ? 0x10 : 0) + (upside ? 0x20 : 0);
+        if (s->y + 8 >= 0xF0) break;
+        for (int j = 0; j < 4; j++)
+            add_sprite(p, x + (j & 1) * 8, y + 8 + (j >> 1) * 8 + (upside ? 2 : 0), rom8(SHELL_TILES + (uint32_t)(t0 + j)), 0,
+                       upside, (rom8(SHELL_FLIPS + (uint32_t)(turn + j)) >> 6) & 1, s->behind ? 0 : 2, enemy_pal[id][s->pal]);
+        break;
+    }
+    case SP_VINE: {
+        int n = (r[0x0399] >> 4) + 1;                                   /* VineHeight */
+        for (int j = 0; j < n && j < 9; j++) add_sprite(p, x, y - 1 + 16 * j, j ? 0x12C : 0x12A, 1, 0, 0, 1, 5);
+        break;
+    }
+    case SP_CLOUD: {
+        static const uint8_t wide[4] = { 0, 1, 2, 3 }, narrow[3] = { 0, 1, 4 };
+        int hard = r[0x06CC] != 0, ph = fc & 0x18;                      /* SecondaryHardMode */
+        add_sprite(p, x + (hard ? 12 : 20), y + ((fc & 0x10) >> 4), 0xE7, 0, 0, 0, 2, 6);
+        for (int j = 0; j < (hard ? 3 : 4); j++) {
+            int i = hard ? narrow[j] : wide[j];
+            uint8_t a = rom8(CLOUD_ATTRS + (uint32_t)(ph + i));
+            add_sprite(p, x - 8 + rom8(CLOUD_X + (uint32_t)i), y - 4, rom8(CLOUD_TILES + (uint32_t)(ph + i)), 1, 0, (a >> 6) & 1, 2, (a >> 1) & 7);
+        }
+        break;
+    }
+    case SP_FIREWORK: {
+        /* ExplosionGfxCounter's ring, and the colour by ExplosionTimerCounter (8 to 1) */
+        int ring = r[0x58 + e] & 3, t = r[0xA0 + e] ? r[0xA0 + e] - 1 : 0;
+        uint16_t tile = rom8(FIREWORK_TILES + (uint32_t)ring);
+        int pal = (rom8(FIREWORK_PALS + (uint32_t)(t > 8 ? 8 : t)) >> 1) & 7;
+        for (int j = 0; j < 4; j++)
+            add_sprite(p, x - 8 + (j >> 1) * 16, y - 16 + (j & 1) * 16, tile, 1, j & 1, j >> 1, 2, pal);
+        break;
+    }
+    case SP_RETAINER:
+        draw_retainer(p, r, e, x, y);
+        break;
+    }
+}
+
 static void build_sprites(snesppu_t *p, const uint8_t *r, int ahead, int screen, const uint8_t *oam, int dx, const uint8_t *real) {
     p->nspr = 0;
     int screen_pose = -1;
@@ -1181,16 +1471,46 @@ static void build_sprites(snesppu_t *p, const uint8_t *r, int ahead, int screen,
     else sprite_owners(r, ahead);
     player_tiles(p, r, screen_pose);
     player_colors(p, r ? r : ram);
+    struct special spc[6];
+    special_objects(screen ? NULL : r, oam, dx, real, spc);
+    /* the player's mirroring, from its first sprite: the NES's ChkForPlayerAttrib mirrors only the second
+       of the third and fourth rows' tiles in its standing, crouching, growing and dying poses, which
+       All-Stars draws whole */
+    int player_flip = -1;
+    for (int i = 0; i < 64; i++)
+        if (owner[i] == OWN_PLAYER && owner_slot[i] == 0) { player_flip = oam[i * 4 + 2] >> 6; break; }
+    /* the castle's end clears no sprites: those its objects drew at other offsets in earlier frames stay,
+       unseen on the NES under the same ones drawn again */
+    uint8_t stale[64] = { 0 };
+    for (int i = 0; i < 64; i++)
+        if (owner[i] == OWN_OTHER)
+            for (int j = 0; j < 64; j++)
+                if ((owner[j] == OWN_ENEMY || owner[j] == OWN_PLAYER) && !memcmp(&oam[i * 4], &oam[j * 4], 4)) { stale[i] = 1; break; }
+    int bowser_done = 0, vine_done = 0;
     for (int i = 0; i < 64; i++) {
         const uint8_t *o = &oam[i * 4];
-        if (owner[i] == OWN_NONE || o[0] >= 0xEF) continue;
-        if (real) {
-            const uint8_t *q = &real[i * 4];
-            if (!memcmp(o, q, 4)) continue;
-            /* the player, wrapped round the moved screen's 8-bit X (widescreen.c's draw_sprites) */
-            if (q[0] < 0xEF && o[0] == q[0] && o[1] == q[1] && o[2] == q[2] && o[3] + dx != q[3]) continue;
-        }
+        if (stale[i] || !sprite_shown(oam, i, dx, real)) continue;
+        if (p->nspr + 12 > (int)(sizeof p->spr / sizeof p->spr[0])) break;
         uint8_t nattr = o[2], tile = o[1];
+        if (owner[i] == OWN_ENEMY && r && !screen) {
+            int e = owner_slot[i] & 15, ox, oy, kind = special_kind(r, e, owner_slot[i] >> 4, tile, &ox, &oy);
+            if (kind == SP_BOWSER) {
+                if (!bowser_done) { bowser_done = 1; draw_bowser(p, r, spc); }
+                continue;
+            }
+            if (kind == SP_VINE) {   /* both pieces are one vine */
+                if (!vine_done) { vine_done = 1; draw_special(p, r, e, &spc[e]); }
+                continue;
+            }
+            if (kind != SP_NONE) {
+                if (!spc[e].done) { spc[e].done = 1; draw_special(p, r, e, &spc[e]); }
+                continue;
+            }
+            if ((r[0x16 + e] & 0x3F) == 0x30) {   /* the flagpole's points: All-Stars' "000" of 5000 and 2000 is in its second table */
+                add_sprite(p, o[3] + dx, o[0] + 1, tile == 0x50 ? 0x10E : tile, 0, 0, 0, 2, 1);
+                continue;
+            }
+        }
         int pal = nattr & 3, hf = (nattr >> 6) & 1, vf = (nattr >> 7) & 1, behind = (nattr >> 5) & 1;
         snes_sprite_t *s = &p->spr[p->nspr];
         s->x = (int16_t)(o[3] + dx);
@@ -1199,13 +1519,21 @@ static void build_sprites(snesppu_t *p, const uint8_t *r, int ahead, int screen,
         int sp, misc;
         if (owner[i] == OWN_PLAYER) {
             int k = owner_slot[i];
+            if (player_flip >= 0) { hf = player_flip & 1; vf = player_flip >> 1; }
             s->tile = (uint16_t)((k & 6) | ((k & 1) ^ hf));
             sp = 7;
         } else if (owner[i] == OWN_ENEMY && r) {
             int e = owner_slot[i] & 15, place = owner_slot[i] >> 4;
             uint8_t id = r[0x16 + e] & 0x3F;
-            /* rows of two: the NES draws a mirrored row's tiles the other way round */
-            int at = (place & ~1) | ((place & 1) ^ hf);
+            /* rows of two: the NES draws a mirrored row's tiles the other way round, and upside down
+               (VerticalFlipFlag: a defeated enemy, $E9C9) it swaps the third row's tiles with the first
+               row's for Hammer Bros, Lakitu and objects $15 on, with the second's for the rest */
+            int row = place >> 1;
+            if (vf && row) {
+                int wide = id == 0x05 || id == 0x11 || id >= 0x15;
+                row = row == 2 ? (wide ? 0 : 1) : (wide ? 1 : 2);
+            } else if (vf && (id == 0x05 || id == 0x11 || id >= 0x15)) row = 2;
+            int at = (row << 1) | ((place & 1) ^ hf);
             uint8_t moved = id == 0x2E ? powerup_tile[tile][at & 3] : enemy_tile[tile][at];
             if (!moved && (misc = misc_sprite(s, tile, nattr, &sp)) >= 0) {   /* a fire bar, a lift */
                 if (!misc) continue;
@@ -1712,16 +2040,22 @@ int allstars_render(uint32_t *out, int stride, int x, int y, int w, int h) {
     write_hud();
     int cam = camera_x();
     area.bg2_scroll = (uint16_t)(cam >> 1);
-    area.bg3_scroll = (uint16_t)(cam >> 2);
+    int type = ram[RAM_AREA_TYPE] & 3;
+    area.bg3_scroll = (uint16_t)(type == 1 ? cam >> 2 : cam);   /* the clouds far behind; the waves with the level */
     write_bg1();
     write_bg2(area.bg2_scroll, x, w);
-    write_bg3_clouds(area.bg3_scroll, x, w);
+    if (type == 1) write_bg3_clouds(area.bg3_scroll, x, w);
+    else write_bg3_plain(type == 0);
     static snesppu_t p;
     p = sb->ppu;
     p.inidisp = 0x0F;   /* All-Stars fades its screens in and out; VS. cuts, so the picture is always at full brightness */
     uint8_t latch[2] = { sb->ofs_latch, sb->hofs_latch };
     int ahead = 0;
     const uint8_t *shown = widescreen_shown_ram(&ahead);
+    /* the castle's end (VictoryMode) runs no GameEngine, so there is no copy of it; the NMI's
+       SpriteShuffler still runs, so RAM is a frame ahead of the picture's sprites like a copy of this
+       frame's GameEngine */
+    if (!shown) { shown = ram; ahead = 1; }
     level_text(&p, ram[0x0770] == 0);
     if (ram[0x0770] == 0) title_banner(&p);
     /* the sprites of the picture, and beside it those the game builds there (widescreen) */
