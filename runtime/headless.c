@@ -213,6 +213,7 @@ static void usage(void) {
         "  --allstars-dump PREFIX at the end, the SNES sandboxes as files (work RAM, VRAM, CGRAM, OAM,\n"
         "                      registers, the parsed columns; PREFIX-screen.* for the screens')\n"
         "  --wav FILE          write audio to a 48 kHz WAV\n"
+        "  --allstars-music    with --allstars: All-Stars' music in it, the arcade's sound effects kept\n"
         "  --trace FILE        write a per-instruction trace (interpreter)\n"
         "  --nestest N         nestest mode: start at $C000 and run N instructions\n"
         "  --blargg            poll the blargg test status at $6000 and exit when done\n"
@@ -246,6 +247,7 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i], "--allstars-png") && i + 1 < argc) as_png = argv[++i];
         else if (!strcmp(argv[i], "--allstars-wide") && i + 1 < argc) as_wide = argv[++i];
         else if (!strcmp(argv[i], "--allstars-dump") && i + 1 < argc) as_dump = argv[++i];
+        else if (!strcmp(argv[i], "--allstars-music")) allstars_music_enabled = true;
         else if (!strcmp(argv[i], "--dip") && i + 1 < argc) dip = (int)strtol(argv[++i], NULL, 16);
         else if (!strcmp(argv[i], "--poke") && i + 1 < argc) parse_pokes(argv[++i]);
         else if (!strcmp(argv[i], "--palette") && i + 1 < argc) pal_out = argv[++i];
@@ -362,10 +364,13 @@ int main(int argc, char **argv) {
             else if (r == 0) { oam_differ++; if (first_differ < 0) first_differ = frame; }
             else oam_none++;
         }
+        if (allstars_music_enabled) allstars_music_frame();
         if (audio) {
             uint32_t avail = apu_samples_available();
             if (audio_n + avail > audio_cap) avail = audio_cap - audio_n;
-            audio_n += apu_read_samples(audio + audio_n, avail);
+            uint32_t got = apu_read_samples(audio + audio_n, avail);
+            allstars_music_mix(audio + audio_n, got, 48000);
+            audio_n += got;
         } else {
             apu.ring_read = apu.ring_write;
         }

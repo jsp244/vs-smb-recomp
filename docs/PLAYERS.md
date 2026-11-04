@@ -26,6 +26,11 @@ the intermission are drawn by All-Stars' own code; the screens only the arcade h
 (the title's "VS.", PUSH BUTTON, continue, the cabinet's buttons) are drawn in
 All-Stars' style. The widescreen views work with it.
 
+The ROM also brings All-Stars' music: Audio > Music chooses Arcade or All-Stars
+(All-Stars' own songs, played by its sound program, with the arcade's sound
+effects), or As the graphics (the default: All-Stars' music with the All-Stars
+graphics, the arcade's with the arcade's). Either works with either graphics.
+
 Menu (Esc in game, or Start + Insert coin together)
 ----------------------------------------------------
 Play          Start / resume, reset, save state, load state, the save state slot
@@ -53,7 +58,8 @@ Graphics      Display mode (windowed / fullscreen / fullscreen exclusive),
               display), run-ahead (0-3 frames; 1 cancels the game's own input lag).
               The line under the rows says what the settings produce and why there
               are borders or bars when there are.
-Audio         Volume, latency preset (Low / Normal / Safe)
+Audio         Volume, music (As the graphics / Arcade / All-Stars: shown once the
+              All-Stars ROM is chosen), latency preset (Low / Normal / Safe)
 Controls      Rebind the buttons, the 2P start button and the rewind / fast-forward
               keys (select a row, press Enter, press the key or pad button)
 Cabinet       The board's DIP switches:

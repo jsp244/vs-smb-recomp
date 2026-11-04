@@ -101,6 +101,7 @@ typedef struct {
     int fast_timer;      /* switch 7: the clock runs faster */
     int continue_lives;  /* switch 8: lives after a continue, 0 four, 1 three */
     int allstars;        /* graphics: 0 the arcade's, 1 Super Mario All-Stars' (needs that ROM: allstars_rom) */
+    int music;           /* 0 the one that goes with the graphics, 1 the arcade's, 2 Super Mario All-Stars' (that ROM too) */
     char rom[2048];
     char allstars_rom[2048];
 } config_t;
@@ -111,7 +112,7 @@ static config_t cfg = {
     .window_size = 3, .display_mode = 0, .resolution = 0, .res_w = 0, .res_h = 0, .scaling = 1, .aspect = 1, .colors = 0, .filter = 2,
     .shader = 0, .shader_strength = 1, .overscan = 1, .no_sprite_limit = 0, .walk_to_edge = 1, .volume = 100,
     .lowlat = 1, .runahead = GAME_LAG, .audio_latency = 1, .rewind = 1, .state_slot = 1,
-    .coinage = 0, .lives = 0, .bonus = 0, .fast_timer = 0, .continue_lives = 0, .allstars = 1, .rom = "", .allstars_rom = ""
+    .coinage = 0, .lives = 0, .bonus = 0, .fast_timer = 0, .continue_lives = 0, .allstars = 1, .music = 0, .rom = "", .allstars_rom = ""
 };
 
 static const char *const display_modes[] = { "Windowed", "Fullscreen", "Fullscreen (exclusive)" };
@@ -122,6 +123,7 @@ static const char *const scalings[]      = { "Integer (exact pixels)", "Fit (fil
 static const char *const aspects[]       = { "Square pixels 8:7", "4:3 (CRT)", "16:9 (widescreen)", "16:10 (widescreen)" };
 static const char *const color_names[]   = { "Arcade (RGB monitor)", "NES (composite)" };
 static const char *const graphics_names[] = { "Arcade", "All-Stars" };
+static const char *const music_names[]    = { "As the graphics", "Arcade", "All-Stars" };
 static const char *const coinage_names[] = { "Free play", "1 coin, 1 credit", "2 coins, 1 credit", "3 coins, 1 credit",
                                              "1 coin, 2 credits", "1 coin, 3 credits", "1 coin, 4 credits", "1 coin, 5 credits" };
 static const char *const lives_names[]   = { "3", "2" };
@@ -204,9 +206,9 @@ static double refresh_hz;             /* reported display refresh rate, 0 if unk
 
 /* menu */
 enum { ACT_PLAY = 1, ACT_RESET, ACT_SAVE, ACT_LOAD, ACT_STOP, ACT_QUIT, ACT_CHOOSE, ACT_CHOOSE_ALLSTARS, ACT_KEYS_DEFAULT, ACT_UPDATE,
-       GFX_CHANGED, AUD_CHANGED, LAT_CHANGED, KEY_CHANGED, SLOT_CHANGED, DIP_CHANGED };
+       GFX_CHANGED, AUD_CHANGED, LAT_CHANGED, KEY_CHANGED, SLOT_CHANGED, DIP_CHANGED, MUS_CHANGED };
 enum { TAB_PLAY, TAB_GFX, TAB_AUDIO, TAB_CONTROLS, TAB_CABINET, TAB_ROM, TAB_UPDATES, N_TABS };
-static ui_item play_items[8], gfx_all[15], gfx_items[15], aud_items[3], ctl_items[K_TOTAL + 3], cab_items[7], rom_items[6],
+static ui_item play_items[8], gfx_all[15], gfx_items[15], aud_all[4], aud_items[4], ctl_items[K_TOTAL + 3], cab_items[7], rom_items[6],
                upd_items[3];
 #define GFX_ROWS 15
 #define GFX_WINDOW_SIZE_ROW 2
@@ -415,6 +417,7 @@ static void write_config(void) {
     fprintf(f, "aspect=%d              ; 0 square pixels, 1 4:3 CRT, 2 16:9 widescreen, 3 16:10 widescreen (the level drawn beside the picture, black bars elsewhere)\n", cfg.aspect);
     fprintf(f, "colors=%d              ; 0 arcade (the RGB monitor of the cabinet), 1 NES (the colours a console shows)\n", cfg.colors);
     fprintf(f, "allstars=%d            ; graphics: 1 those of Super Mario All-Stars (from allstars_rom above), 0 the arcade's\n", cfg.allstars);
+    fprintf(f, "music=%d               ; 0 the one that goes with the graphics, 1 the arcade's, 2 Super Mario All-Stars' (from allstars_rom)\n", cfg.music);
     fprintf(f, "filter=%d              ; 0 nearest, 1 linear, 2 sharp\n", cfg.filter);
     fprintf(f, "shader=%d              ; 0 off, 1 scanlines, 2 CRT, 3 CRT curved, 4 glow\n", cfg.shader);
     fprintf(f, "shader_strength=%d     ; 0 light, 1 medium, 2 strong\n", cfg.shader_strength);
@@ -471,6 +474,7 @@ static void load_config(void) {
         if (!strcmp(key, "rom")) snprintf(cfg.rom, sizeof cfg.rom, "%s", val);
         else if (!strcmp(key, "allstars_rom")) snprintf(cfg.allstars_rom, sizeof cfg.allstars_rom, "%s", val);
         else if (!strcmp(key, "allstars")) cfg.allstars = atoi(val) ? 1 : 0;
+        else if (!strcmp(key, "music")) { int v = atoi(val); if (v >= 0 && v <= 2) cfg.music = v; }
         else if (!strcmp(key, "window_size")) { int v = atoi(val); if (v >= 1 && v <= 6) cfg.window_size = v; }
         else if (!strcmp(key, "display_mode")) { int v = atoi(val); if (v >= 0 && v <= 2) cfg.display_mode = v; }
         else if (!strcmp(key, "resolution")) {
@@ -1028,12 +1032,15 @@ static void window_size_for_config(int *w, int *h) {
     *w = (int)(*h * target_aspect(src.h) + 0.5);
 }
 
+static void apply_music(void);
+
 static void apply_graphics(void) {
     cfg.window_size = window_size_idx + 1;
     if (cfg.resolution > 0 && cfg.resolution < n_res) { cfg.res_w = res_list[cfg.resolution].w; cfg.res_h = res_list[cfg.resolution].h; }
     else { cfg.resolution = 0; cfg.res_w = cfg.res_h = 0; }
     ppu_no_sprite_limit = cfg.no_sprite_limit != 0;
     allstars_enabled = cfg.allstars != 0;
+    apply_music();
     build_palette();
     Uint32 flags = SDL_GetWindowFlags(window);
     int cur = ((flags & SDL_WINDOW_FULLSCREEN_DESKTOP) == SDL_WINDOW_FULLSCREEN_DESKTOP) ? 1 : (flags & SDL_WINDOW_FULLSCREEN) ? 2 : 0;
@@ -1530,6 +1537,26 @@ static void refresh_play_items(void) {
                   handheld ? "" : "   In game F6 / F7 change the slot.");
 }
 
+/* the music heard: All-Stars' when chosen (or when it goes with the graphics) and its sound program is loaded */
+static void apply_music(void) {
+    allstars_music_enabled = allstars_music_available() && (cfg.music == 2 || (cfg.music == 0 && cfg.allstars));
+}
+
+/* the Audio rows shown: Music once the All-Stars ROM is chosen; the explanation for what is heard */
+static void layout_audio(void) {
+    int n = 0;
+    for (int i = 0; i < 4; i++) {
+        if (i == 1 && !allstars_music_available()) continue;
+        aud_items[n++] = aud_all[i];
+    }
+    snprintf(aud_items[n - 1].info, sizeof aud_items[n - 1].info, "%s%s",
+             allstars_music_available() ? "Music: All-Stars plays the songs of Super Mario All-Stars (from its ROM) with the arcade's sound effects; As the graphics picks it with the All-Stars graphics. " : "",
+             "48 kHz with the NES mixer and output filters. Dynamic rate control holds the queue at the chosen latency; use Safe if sound stutters.");
+    tabs[TAB_AUDIO].nitems = n;
+    if (tabs[TAB_AUDIO].sel >= n) tabs[TAB_AUDIO].sel = n - 1;
+    apply_music();
+}
+
 /* the Graphics rows shown: all of them, minus Window size while a resolution is set (it is unused then) */
 static void layout_gfx(void) {
     int n = 0;
@@ -1693,11 +1720,11 @@ static void build_menu(void) {
     g[13] = (ui_item){ "Run-ahead", UI_CHOICE, GFX_CHANGED, &cfg.runahead, runahead_names, 4, 0, 0, 0, NULL, "", NULL };
     g[14] = (ui_item){ "", UI_INFO, 0, NULL, NULL, 0, 0, 0, 0, NULL, "", NULL };
 
-    ui_item *a = aud_items;
+    ui_item *a = aud_all;
     a[0] = (ui_item){ "Volume", UI_INT, AUD_CHANGED, &cfg.volume, NULL, 0, 0, 100, 5, "%", "", NULL };
-    a[1] = (ui_item){ "Latency", UI_CHOICE, LAT_CHANGED, &cfg.audio_latency, latency_names, 3, 0, 0, 0, NULL, "", NULL };
-    a[2] = (ui_item){ "", UI_INFO, 0, NULL, NULL, 0, 0, 0, 0, NULL,
-                      "48 kHz with the NES mixer and output filters. Dynamic rate control holds the queue at the chosen latency; use Safe if sound stutters.", NULL };
+    a[1] = (ui_item){ "Music", UI_CHOICE, MUS_CHANGED, &cfg.music, music_names, 3, 0, 0, 0, NULL, "", NULL };
+    a[2] = (ui_item){ "Latency", UI_CHOICE, LAT_CHANGED, &cfg.audio_latency, latency_names, 3, 0, 0, 0, NULL, "", NULL };
+    a[3] = (ui_item){ "", UI_INFO, 0, NULL, NULL, 0, 0, 0, 0, NULL, "", NULL };
 
     static const char *const ctl_labels[K_TOTAL] = { "A (jump)", "B (run, fireball)", "Insert coin", "Start (1 player)", "Up", "Down",
                                                      "Left", "Right", "Start (2 players)", "Rewind (hold)", "Fast-forward (hold)" };
@@ -1745,6 +1772,7 @@ static void build_menu(void) {
     tabs[TAB_PLAY] = (ui_tab){ "Play", play_items, 8, 0 };
     tabs[TAB_GFX] = (ui_tab){ "Graphics", gfx_items, GFX_ROWS, 0 };
     tabs[TAB_AUDIO] = (ui_tab){ "Audio", aud_items, 3, 0 };
+    layout_audio();
     tabs[TAB_CONTROLS] = (ui_tab){ "Controls", ctl_items, K_TOTAL + 3, 0 };
     tabs[TAB_CABINET] = (ui_tab){ "Cabinet", cab_items, 7, 0 };
     tabs[TAB_ROM] = (ui_tab){ "ROM", rom_items, 6, 1 };
@@ -1797,6 +1825,7 @@ static int load_allstars_file(const char *path) {
     printf("All-Stars ROM: %s (%s)\n", allstars_name(), allstars_sha1());
     fflush(stdout);
     layout_gfx();
+    layout_audio();
     refresh_rom_items();
     return 1;
 }
@@ -1874,6 +1903,7 @@ static void menu_action(ui_event e) {
     if (e.type == UI_EV_CHANGED) {
         if (e.id == GFX_CHANGED) apply_graphics();
         else if (e.id == LAT_CHANGED) { audio_out_set_preset(cfg.audio_latency); write_config(); }
+        else if (e.id == MUS_CHANGED) { apply_music(); write_config(); }
         else if (e.id == SLOT_CHANGED) select_slot(cfg.state_slot);
         else if (e.id == DIP_CHANGED) apply_dips();
         else write_config();
@@ -2420,6 +2450,7 @@ int main(int argc, char **argv) {
     else if (cfg.allstars_rom[0]) load_allstars_file(cfg.allstars_rom);
     if (!allstars_arg && !allstars_loaded()) find_allstars_nearby();
     allstars_enabled = cfg.allstars != 0;
+    layout_audio();
     menu.tab = rom_ok ? TAB_PLAY : TAB_ROM;
     menu.focus = 1;
     ui_select_first(&menu);

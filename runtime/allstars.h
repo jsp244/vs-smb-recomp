@@ -32,6 +32,17 @@ const char *allstars_path(void);
 /* option, not machine state: show the remastered picture when an All-Stars ROM is loaded */
 extern bool allstars_enabled;
 
+/* All-Stars' music instead of the arcade's (an option, not machine state; needs the ROM too). Its
+   sound program runs on the SNES sound unit (spc700.c) with the songs All-Stars asks for VS.'s
+   music; VS.'s sound effects stay. */
+extern bool allstars_music_enabled;
+int  allstars_music_available(void);   /* the ROM's sound program is loaded */
+/* once after each real frame (not a run-ahead one): VS.'s music requests to the sound program, and
+   that frame of its sound */
+void allstars_music_frame(void);
+/* adds n mono samples of that sound, at `rate` samples a second, to buf */
+void allstars_music_mix(int16_t *buf, uint32_t n, uint32_t rate);
+
 /* Connects to the running VS. Super Mario Bros. (hooks in the game's area start, area parser and
    frame engine; read-only) and forgets what was built for the previous ROM or state. Called after a
    ROM or state load and after allstars_load. */

@@ -9,6 +9,7 @@
 #include "audio_out.h"
 #include <SDL.h>
 #include "nes.h"
+#include "allstars.h"
 
 static const struct { int target_ms, max_ms, prime_ms, device_samples; } presets[3] = {
     { 16, 60, 10, 256 },     /* low: ~25 ms including the device buffer */
@@ -82,11 +83,15 @@ void audio_out_pump(int muted, int volume) {
     }
     apu.sample_rate = (uint32_t)cur_rate;
 
+    /* this frame of All-Stars' music, when it is the one heard, goes on top of the APU's samples
+       (consumed at the same rate even when muted, so it stays with the game) */
+    allstars_music_frame();
     uint32_t n = apu_samples_available();
     while (n > 0) {
         uint32_t got = apu_read_samples(buf, n < 8192 ? n : 8192);
         if (!got) break;
         n -= got;
+        allstars_music_mix(buf, got, (uint32_t)cur_rate);
         if (muted || !dev) continue;
         if (SDL_GetQueuedAudioSize(dev) > (Uint32)(base_rate * presets[preset].max_ms / 1000) * sizeof(int16_t)) continue;
         if (volume != 100) for (uint32_t i = 0; i < got; i++) buf[i] = (int16_t)(buf[i] * volume / 100);

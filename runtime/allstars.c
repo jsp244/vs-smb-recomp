@@ -45,6 +45,7 @@
 #include "widescreen.h"
 #include "cpu816.h"
 #include "snesppu.h"
+#include "spc700.h"
 #include "nes.h"
 #include "palette.h"
 #include <stddef.h>
@@ -835,6 +836,9 @@ void allstars_attach(void) {
 }
 
 /* ---- loading ---- */
+static void music_free(void);
+static void music_build(void);
+
 int allstars_load(const char *path, char *err, size_t errlen) {
     FILE *f = nes_fopen(path, "rb");
     if (!f) { snprintf(err, errlen, "cannot open the file"); return -1; }
@@ -873,16 +877,220 @@ int allstars_load(const char *path, char *err, size_t errlen) {
     as.crc32 = rom_crc32(as.rom, as.size);
     if (startup() != 0) { allstars_unload(); snprintf(err, errlen, "the ROM's game did not start in the sandbox"); return -1; }
     allstars_attach();
+    music_build();
     return 0;
 }
 
 void allstars_unload(void) {
+    music_free();
     free(as.rom);
     memset(&as, 0, sizeof as);
     area.ready = false;
 }
 
 int allstars_loaded(void) { return as.rom != NULL; }
+
+/* ---- the music ---- */
+
+/* All-Stars' music, played by its own sound program on the SNES sound unit (spc700.c). All-Stars
+   writes the menu's sound engine and samples ($07:FC00, then $3B:8000) and Super Mario Bros.' songs
+   ($1F:8000) into the sound unit's RAM, each a stream of blocks ($00:8B17), and while it plays it
+   hands the program a song number, an effect or a command on four ports each frame ($04:8163).
+   Here VS.'s requests (AreaMusicQueue $FB, EventMusicQueue $FC, still there at the end of a frame:
+   the next NMI's SoundEngine takes them) become the songs All-Stars asks for the same music
+   (GetAreaMusic's table at $05:C8F5 and the calls noted at event_song), and Bowser's battle song
+   starts when he appears ($03:D6B6), as in All-Stars. VS.'s sound effects stay: while All-Stars'
+   music plays, the APU's squares and noise are heard only while an effect uses them (Square1/2
+   SoundBuffer $F1/$F2, NoiseSoundBuffer $F3), its triangle not at all. */
+#define SND_MENU_A       0x07FC00   /* the menu's stream: $400 bytes here, then the rest at SND_MENU_B */
+#define SND_MENU_B       0x3B8000
+#define SND_SMB1         0x1F8000   /* Super Mario Bros.' songs */
+#define SND_DRIVER       0x0500     /* where both streams start the program */
+#define MUS_RING         8192
+#define MUS_GAIN         2          /* All-Stars' mix, brought to the APU's loudness (both RMS about 1,400 in 1-1) */
+
+bool allstars_music_enabled;
+static spc_t *spc;
+static uint8_t *spc_ram0;          /* the sound unit's RAM after the streams, to start again from */
+static int16_t spc_frame[2 * 640];
+static struct {
+    uint8_t q[4];                  /* this frame's requests: All-Stars' queues $1600-$1603 */
+    uint8_t last[4], wait[4], song, hold, toggle;   /* its port routine's state ($1604-$160F) */
+    double owed;                   /* sound unit cycles to run */
+    int16_t ring[MUS_RING];        /* mono, at SPC_RATE */
+    unsigned rd, wr;
+    double phase;
+    int on;                        /* All-Stars' music is the one heard (else VS. plays music it has no song for) */
+    int started;                   /* in step with VS.'s music since the option was turned on */
+    int asked;                     /* the song last asked for, 0 none */
+    int bowser_quiet;              /* frames without Bowser; his song again after a while */
+    uint8_t frame;                 /* VS.'s frame counter last time: any other step than 1 is a state loaded */
+} mus;
+
+typedef uint8_t (*snd_byte)(uint32_t i);
+static uint8_t snd_menu(uint32_t i) { return i < 0x400 ? rom8(SND_MENU_A + i) : rom8(SND_MENU_B + (i - 0x400)); }
+static uint8_t snd_smb1(uint32_t i) { return rom8(SND_SMB1 + i); }
+
+/* writes a stream's blocks into the sound unit's RAM; its start address, or -1 if it is not one */
+static int snd_stream(snd_byte b, uint32_t max) {
+    uint32_t i = 0;
+    for (int blocks = 0; blocks < 64; blocks++) {
+        unsigned len = b(i) | (b(i + 1) << 8), addr = b(i + 2) | (b(i + 3) << 8);
+        i += 4;
+        if (!len) return (int)addr;
+        if (i + len > max || addr + len > 0x10000) return -1;
+        for (unsigned k = 0; k < len; k++) spc->ram[addr + k] = b(i + k);
+        i += len;
+    }
+    return -1;
+}
+
+static uint8_t music_mask(void) {
+    if (!mus.on) return 0x1F;
+    return (uint8_t)((ram[0xF1] ? 1 : 0) | (ram[0xF2] ? 2 : 0) | (ram[0xF3] ? 8 : 0) | 16);
+}
+
+static void music_free(void) {
+    if (apu_mask_hook == music_mask) apu_mask_hook = NULL;
+    free(spc); spc = NULL;
+    free(spc_ram0); spc_ram0 = NULL;
+}
+
+static void music_restart(void) {
+    spc_reset(spc);
+    memcpy(spc->ram, spc_ram0, 0x10000);
+    spc->outbuf = spc_frame; spc->outcap = (int)(sizeof spc_frame / sizeof spc_frame[0]);
+    spc_start(spc, SND_DRIVER);
+    memset(&mus, 0, sizeof mus);
+    mus.bowser_quiet = 120;
+    spc_run(spc, SPC_CLOCK / 10);   /* its start-up, before the first request */
+    spc->outn = 0;
+}
+
+static void music_build(void) {
+    music_free();
+    spc = calloc(1, sizeof *spc);
+    spc_ram0 = malloc(0x10000);
+    if (!spc || !spc_ram0) { music_free(); return; }
+    spc_reset(spc);
+    if (snd_stream(snd_menu, 0x8400) != SND_DRIVER || snd_stream(snd_smb1, 0x8000) != SND_DRIVER) { music_free(); return; }
+    memcpy(spc_ram0, spc->ram, 0x10000);
+    music_restart();
+    apu_mask_hook = music_mask;
+}
+
+int allstars_music_available(void) { return spc != NULL; }
+
+/* All-Stars' songs for VS.'s area music (GetAreaMusic, $05:C939) and its event music; -1: none */
+static int area_song(uint8_t q) {
+    switch (q) {
+    case 0x01: return 0x02;                  /* above ground */
+    case 0x02: return 0x03;                  /* water */
+    case 0x04: return 0x06;                  /* underground */
+    case 0x08: return 0x08;                  /* castle */
+    case 0x10: return 0x01;                  /* the coin heavens */
+    case 0x20: return 0x13;                  /* into the pipe */
+    case 0x40: return 0x0D;                  /* the star ($03:DE17) */
+    case 0x80: return 0xF0;                  /* silence: All-Stars' stop */
+    }
+    return -1;
+}
+static int event_song(uint8_t q) {
+    switch (q) {
+    case 0x01: return 0x09;                  /* death ($03:B1B4, $03:DF8A) */
+    case 0x02: case 0x10: return 0x0A;       /* game over ($03:A0BC) */
+    case 0x04: return 0x0E;                  /* the princess ($03:896B) */
+    case 0x08: return 0x0B;                  /* the castle's end ($03:D4EF) */
+    case 0x20: return 0x0C;                  /* the goal ($03:B952) */
+    case 0x40: return 0x1FF;                 /* time running out: effect $FF on port 0 ($03:B811) */
+    case 0x80: return 0xF0;
+    }
+    return -1;
+}
+
+static void music_ask(int song) {
+    if (song == 0x1FF) { mus.q[0] = 0xFF; return; }
+    mus.q[2] = (uint8_t)song;
+    mus.asked = song;
+}
+
+/* All-Stars' port routine ($04:8163): a request is held on its port until the program echoes it
+   (or 3 frames; a song 4 frames after it is echoed), the queues emptied */
+static void music_ports(void) {
+    for (int p = 0; p < 2; p++) {
+        uint8_t echo = p ? (uint8_t)(spc->out[1] & 15) : spc->out[0];
+        if (mus.q[p]) { spc->in[p] = mus.q[p]; mus.last[p] = p ? (uint8_t)(mus.q[p] & 15) : mus.q[p]; mus.wait[p] = 0; }
+        else if (echo == mus.last[p] || ++mus.wait[p] >= 3) { spc->in[p] = 0; mus.last[p] = 0; mus.wait[p] = 0; }
+    }
+    if (mus.q[2]) { spc->in[2] = mus.q[2]; mus.hold = 4; if (mus.q[2] < 0xF0) mus.song = mus.q[2]; }
+    else if (spc->out[2] == mus.song && mus.hold && --mus.hold == 0) { mus.hold = 1; spc->in[2] = 0; }
+    if (mus.q[3]) {
+        mus.last[3] = mus.q[3];
+        uint8_t v = mus.q[3];
+        if (v == 1 || v == 5 || v == 6 || v == 0x4A) { v |= mus.toggle; mus.toggle ^= 0x80; }
+        spc->in[3] = v; mus.wait[3] = 0;
+    } else if ((spc->out[3] & 0x7F) == mus.last[3] || ++mus.wait[3] >= 3) { spc->in[3] = 0; mus.last[3] = 0; mus.wait[3] = 0; }
+    memset(mus.q, 0, sizeof mus.q);
+}
+
+void allstars_music_frame(void) {
+    if (!spc) return;
+    int want = allstars_music_enabled && as.rom;
+    if (!want) {
+        if (mus.started) { mus.started = mus.on = 0; music_ask(0xF0); music_ports(); }
+        mus.rd = mus.wr;
+        return;
+    }
+    if (!mus.started || (uint8_t)(ram[0x09] - mus.frame) != 1) {
+        /* turned on, or a state loaded (a rewind step, a slot): what VS. plays now (its buffers) */
+        uint8_t event = ram[0x07B1];
+        int song = event && event != 0x40 ? event_song(event) : ram[0xF4] ? area_song(ram[0xF4]) : 0xF0;
+        mus.on = song >= 0;
+        if (song >= 0 && song != mus.asked) music_ask(song);
+        mus.started = 1;
+    }
+    mus.frame = ram[0x09];
+    /* this frame's requests (an event over the area's, as VS.'s MusicHandler takes them) */
+    uint8_t event = ram[0xFC], area = ram[0xFB];
+    int song = event ? event_song(event) : area ? area_song(area) : -2;
+    if (song >= 0) { mus.on = 1; music_ask(song); }
+    else if (song == -1) { mus.on = 0; music_ask(0xF0); }   /* music All-Stars has no song for: the arcade's */
+    /* Bowser's battle song when he appears, the real one's in world 8 */
+    int bowser = 0;
+    for (int e = 0; e < 6; e++) bowser |= ram[0x0F + e] && (ram[0x16 + e] & 0x3F) == 0x2D;
+    if (bowser) {
+        if (mus.bowser_quiet >= 120 && song < 0 && mus.on) music_ask(ram[0x075F] == 7 ? 0x05 : 0x04);
+        mus.bowser_quiet = 0;
+    } else if (mus.bowser_quiet < 120) mus.bowser_quiet++;
+    if (ram[0x0770] == 0 && mus.asked != 0xF0 && mus.asked) music_ask(0xF0);   /* the title is silent */
+    music_ports();
+    /* a frame of sound (NTSC: 60.0988 frames a second) */
+    mus.owed += SPC_CLOCK / 60.0988;
+    int c = (int)mus.owed;
+    mus.owed -= c;
+    spc->outn = 0;
+    spc_run(spc, c);
+    for (int i = 0; i + 1 < spc->outn; i += 2) {
+        if (((mus.wr + 1) & (MUS_RING - 1)) == mus.rd) mus.rd = (mus.rd + 1) & (MUS_RING - 1);
+        mus.ring[mus.wr] = (int16_t)((spc->outbuf[i] + spc->outbuf[i + 1]) >> 1);
+        mus.wr = (mus.wr + 1) & (MUS_RING - 1);
+    }
+    /* at most 3 frames behind: the sound follows the game */
+    while (((mus.wr - mus.rd) & (MUS_RING - 1)) > 1600) mus.rd = (mus.rd + 1) & (MUS_RING - 1);
+}
+
+void allstars_music_mix(int16_t *buf, uint32_t n, uint32_t rate) {
+    if (!spc || !mus.on || !rate) return;
+    double step = (double)SPC_RATE / rate;
+    for (uint32_t i = 0; i < n; i++) {
+        if (((mus.wr - mus.rd) & (MUS_RING - 1)) < 2) break;
+        int a = mus.ring[mus.rd], b = mus.ring[(mus.rd + 1) & (MUS_RING - 1)];
+        int v = buf[i] + (int)((a + (b - a) * mus.phase) * MUS_GAIN);
+        buf[i] = (int16_t)(v > 32767 ? 32767 : v < -32768 ? -32768 : v);
+        mus.phase += step;
+        while (mus.phase >= 1.0) { mus.phase -= 1.0; mus.rd = (mus.rd + 1) & (MUS_RING - 1); }
+    }
+}
 
 /* the sandbox as files (prefix.wram, .vram, .cgram, .oam, .txt), for looking at it with other tools */
 static void dump_sandbox(const sbx_t *s, const char *prefix, bool columns) {

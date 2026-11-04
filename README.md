@@ -69,6 +69,17 @@ cabinet's buttons and the continue timer's box are the arcade's pixels lit and
 outlined in All-Stars' manner. The widescreen views work with it (the objects beside
 the picture and the walk into the left band included).
 
+**All-Stars' music.** The same ROM brings All-Stars' music, chosen apart from the
+graphics: **Audio > Music: As the graphics / Arcade / All-Stars** (As the graphics, the
+default, plays All-Stars' with the All-Stars graphics and the arcade's with the
+arcade's). All-Stars' own sound program plays it: its sound engine, samples and
+Super Mario Bros. songs, written from the ROM into an emulated SNES sound unit
+(`runtime/spc700.c`: the SPC700 with its timers and ports, and the DSP with its BRR
+voices, envelopes, noise, pitch modulation and echo), which gets the song All-Stars
+asks for whenever VS. starts music (Bowser's battle song included, as in All-Stars).
+The arcade's sound effects stay: while All-Stars' music plays, the APU's channels sound
+only while an effect uses them. It costs about 0.15 ms a frame on a laptop CPU.
+
 Options (all saved to `vssmb.ini`): windowed / fullscreen / exclusive fullscreen, a
 resolution list built from the display's own modes plus 1920x1080 and 3840x2160,
 window size 1x-6x, scaling (integer / fit / stretch), aspect ratio (square pixels 8:7,
@@ -194,12 +205,23 @@ Verified (headless harness with scripted input and RAM pokes, screenshots inspec
   the title, the PUSH BUTTON screen and play remastered. The whole 512-pixel widescreen
   canvas costs about 2.4 ms per frame on a laptop CPU and 4.2 ms on the Deck (the
   emulation itself 2.3 ms there), well inside a 60 Hz frame
+* All-Stars' music: All-Stars' sound program runs on the emulated sound unit and plays
+  every song it uses for Super Mario Bros. (the ground theme checked note by note: its
+  key-ons give E E E C E G in the theme's rhythm, the intervals exact); the songs asked
+  for VS.'s music followed through the title's silence, 1-1, a death, the goal and 1-2's
+  pipe, and Bowser's song; the arcade's sound effects heard with the arcade's music
+  muted; with the option off the sound is the same as before bit for bit; with it on the
+  frame hashes are unchanged (six scenes) and the self-tests pass (run-ahead included),
+  on Windows and in the Linux and Deck builds; the same sound bit for bit on Linux as on
+  Windows; the Android APKs build with it
 
 Not yet verified: a full play-through to the ending by a person, the name entry for a
 top score, and two-player games beyond starting one. In the remastered graphics: a
 coin heaven itself (the cloud lift was checked on a lift drawn as one), Toad's scenes
 in worlds 2-7 (All-Stars' own code runs them, as it does world 1's, which was checked),
-and a real window on the Deck in Game Mode.
+and a real window on the Deck in Game Mode. All-Stars' music has not been listened to
+by a person yet (it was checked by its notes and levels), nor run on the Deck or an
+Android device; it is mixed to mono, as the port's sound is.
 
 ## Legal note
 
@@ -208,9 +230,11 @@ copyrights of Nintendo. You need your own legally obtained dump of the board; th
 project does not include, download or write one. Everything derived from your ROM (the
 generated C, disassembly listings, builds, saves) stays on your machine. Do not
 redistribute `generated/` or the built executable, since those contain the recompiled
-game. The same holds for the All-Stars ROM of the remastered graphics: it is read at
-run time from your file and kept in memory only; the repository holds no data from it,
-only addresses in its program and the rules that combine its art.
+game. The same holds for the All-Stars ROM of the remastered graphics and music: it is
+read at run time from your file and kept in memory only; the repository holds no data
+from it, only addresses in its program, the rules that combine its art and the song
+numbers it uses. The SNES sound unit is emulated without its boot ROM (the program is
+written into its memory directly).
 
 ## Building
 

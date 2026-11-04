@@ -11,6 +11,14 @@ static int16_t apu_ring[APU_RING_SIZE];   /* output samples; indices in apu_t */
 
 void apu_flush_samples(void) { apu.ring_read = apu.ring_write; }
 
+/* not machine state: the channels heard (bit 0 square 1, 1 square 2, 2 triangle, 3 noise, 4 DMC),
+   asked of the hook after each catch-up for the stretch that follows. While some are left out,
+   that mix goes through its own copy of the output filters to the ring, and the machine's state
+   (the averaging and the filters in apu_t) still follows the whole mix, so it is the same either way */
+uint8_t (*apu_mask_hook)(void);
+static uint8_t apu_span_mask = 0x1F;
+static struct { int on; double acc, hp90_in, hp90_out, hp440_in, hp440_out, lp; } masked;
+
 #define CPU_HZ 1789773u
 
 static const uint8_t length_table[32] = {
@@ -172,7 +180,7 @@ static inline void dmc_clock(void) {
 }
 
 /* ---- output ---- */
-static inline void emit_sample(float v) {
+static inline void emit_sample(float v, float vm) {
     double x = v;
     double y1 = x - apu.hp90_prev_in + hp90_a * apu.hp90_prev_out;
     apu.hp90_prev_in = x; apu.hp90_prev_out = y1;
@@ -180,6 +188,15 @@ static inline void emit_sample(float v) {
     apu.hp440_prev_in = y1; apu.hp440_prev_out = y2;
     apu.lp_prev += lp_b * (y2 - apu.lp_prev);
     double s = apu.lp_prev * 32767.0 * 1.4;
+    if (masked.on) {
+        double m = vm;
+        double z1 = m - masked.hp90_in + hp90_a * masked.hp90_out;
+        masked.hp90_in = m; masked.hp90_out = z1;
+        double z2 = z1 - masked.hp440_in + hp440_a * masked.hp440_out;
+        masked.hp440_in = z1; masked.hp440_out = z2;
+        masked.lp += lp_b * (z2 - masked.lp);
+        s = masked.lp * 32767.0 * 1.4;
+    }
     if (s > 32767) s = 32767; else if (s < -32768) s = -32768;
     uint32_t next = (apu.ring_write + 1) & (APU_RING_SIZE - 1);
     if (next != apu.ring_read) { apu_ring[apu.ring_write] = (int16_t)s; apu.ring_write = next; }
@@ -243,13 +260,25 @@ static inline void apu_cycle(void) {
     if (apu.noise.length && !(apu.noise.shift & 1))
         noise = apu.noise.const_volume ? apu.noise.volume : apu.noise.env_decay;
     float out = pulse_table[p1 + p2] + tnd_table[3 * tri + 2 * noise + apu.dmc.output];
+    if (apu_span_mask != 0x1F) {
+        if (!masked.on) {   /* from the whole mix's filters, so it starts without a step */
+            masked.on = 1;
+            masked.acc = apu.acc;
+            masked.hp90_in = apu.hp90_prev_in; masked.hp90_out = apu.hp90_prev_out;
+            masked.hp440_in = apu.hp440_prev_in; masked.hp440_out = apu.hp440_prev_out;
+            masked.lp = apu.lp_prev;
+        }
+        int m1 = (apu_span_mask & 1) ? p1 : 0, m2 = (apu_span_mask & 2) ? p2 : 0;
+        int mt = (apu_span_mask & 4) ? tri : 0, mn = (apu_span_mask & 8) ? noise : 0, md = (apu_span_mask & 16) ? apu.dmc.output : 0;
+        masked.acc += pulse_table[m1 + m2] + tnd_table[3 * mt + 2 * mn + md];
+    } else masked.on = 0;
     apu.acc += out;
     apu.acc_n++;
     apu.sample_phase += apu.sample_rate;
     if (apu.sample_phase >= CPU_HZ) {
         apu.sample_phase -= CPU_HZ;
-        emit_sample((float)(apu.acc / apu.acc_n));
-        apu.acc = 0; apu.acc_n = 0;
+        emit_sample((float)(apu.acc / apu.acc_n), (float)(masked.acc / apu.acc_n));
+        apu.acc = 0; apu.acc_n = 0; masked.acc = 0;
     }
 }
 
@@ -258,6 +287,8 @@ void apu_run_to(uint64_t target) {
         apu_cycle();
         apu.cycles++;
     }
+    /* for the stretch up to the next register write: what the game has set by now */
+    apu_span_mask = apu_mask_hook ? apu_mask_hook() : 0x1F;
 }
 
 uint8_t apu_read_status(void) {

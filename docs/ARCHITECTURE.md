@@ -32,6 +32,7 @@ runtime/bandwalk.c   the player walking into the left band (patches to the game'
 runtime/allstars.c   the remastered graphics: Super Mario All-Stars' code in a sandbox SNES, and the frame from it
 runtime/cpu816.c     65C816 interpreter for that sandbox
 runtime/snesppu.c    SNES line renderer (modes 0/1, priorities, windows, colour math, sprites) for it
+runtime/spc700.c     the SNES sound unit (SPC700, timers, ports, S-DSP) for All-Stars' music
 runtime/sys.c        power/reset, frame loop, save states
 runtime/headless.c   command-line harness (tests, scripting, pokes, screenshots, traces, coverage)
 runtime/recomp_rt.h  helpers used by the generated code
@@ -355,9 +356,36 @@ arcade's pixels and colours, lit from the top left, shaded at the bottom right a
 outlined in a dark shade of their colour, as All-Stars draws its sprites; Mario there is
 All-Stars' frame for the pose VS. draws.
 
-Nothing from either ROM is stored: All-Stars' graphics and code are read from the
-player's file at run time and kept in memory, and the tiles made for the screens are
-made again for each frame in the copy of the PPU it is drawn from.
+**Music.** All-Stars' music is its own sound program on an emulated SNES sound unit,
+`spc700.c`: the SPC700 (every instruction, with its cycle counts), its three timers and
+four ports, and the S-DSP modelled per sample (BRR decoding with its four filters, a
+Gaussian-shaped interpolation, ADSR and GAIN envelopes on the hardware's rate table,
+noise, pitch modulation, echo with the 8-tap FIR, KON / KOFF / ENDX). No boot ROM: the
+streams All-Stars uploads ($00:8B17: the menu's engine and samples from $07:FC00 and
+$3B:8000, then Super Mario Bros.' songs from $1F:8000; blocks of length, address and
+bytes) are written into its RAM and the program started at $0500. Each real frame (not
+the run-ahead ones) the port routine All-Stars runs in its NMI ($04:8163) is repeated:
+the song asked for is held on port 2 until the program echoes it, an effect on port 0
+for up to 3 frames, then the sound unit runs a frame's 17,039 cycles and its 32 kHz
+output goes, mixed to mono and resampled, on top of the APU's samples. The songs are
+the ones All-Stars asks for the same music: VS.'s AreaMusicQueue ($FB) and
+EventMusicQueue ($FC), read at the end of each frame, before the next NMI's SoundEngine
+takes them, give ground $02, water $03, underground $06, castle $08, coin heaven $01,
+pipe $13, star $0D, death $09, game over $0A, the castle's end $0B, the princess $0E, the
+goal $0C, silence the program's stop $F0, and time running out effect $FF (the program
+plays the jingle and speeds the song up); Bowser's battle song ($04, in world 8 $05)
+starts when he appears, as All-Stars' Bowser code asks for it ($03:D6AB). After a state
+load (a frame counter step other than one) the song is set again from VS.'s music
+buffers. While All-Stars' music plays, the APU's squares and noise are heard only while
+VS.'s sound effects use them (Square1/2SoundBuffer $F1/$F2, NoiseSoundBuffer $F3) and
+its triangle not at all: `apu_mask_hook` picks the channels for each stretch between
+register writes, and that mix goes through its own copy of the output filters, so the
+APU's state (and the frame hashes, run-ahead, save states) is the same with the music on
+or off.
+
+Nothing from either ROM is stored: All-Stars' graphics, code and sound program are read
+from the player's file at run time and kept in memory, and the tiles made for the
+screens are made again for each frame in the copy of the PPU it is drawn from.
 
 ## Known inaccuracies
 

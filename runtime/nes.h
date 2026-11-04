@@ -325,6 +325,9 @@ uint32_t apu_samples_available(void);
 uint32_t apu_read_samples(int16_t *out, uint32_t max);
 void    apu_set_sample_rate(uint32_t hz);
 void    apu_flush_samples(void);   /* drop the samples not yet read (after a state load that is not run-ahead) */
+/* which channels are heard, asked after each catch-up (bit 0 square 1, 1 square 2, 2 triangle, 3 noise,
+   4 DMC; NULL: all): output only, not machine state */
+extern uint8_t (*apu_mask_hook)(void);
 
 /* mem.c */
 uint8_t mem_read_slow(uint16_t a);
