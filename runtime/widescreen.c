@@ -56,6 +56,8 @@
 #define RAM_VRAM_BUF2_OFS     0x0340   /* the buffer of nametable writes the renderer fills (the NMI empties it) */
 #define RAM_VRAM_BUF2         0x0341
 #define RAM_OAM               0x0200   /* the sprite page the NMI copies to the PPU */
+#define RAM_BLOCK_BUFFER      0x0500   /* the metatiles objects collide with: 13 rows of 16 columns for the
+                                          even pages, then 13 for the odd ones */
 #define MARGIN 16                      /* keep off the column being rendered, and off the oldest one */
 
 /* the engine's code (VS. Super Mario Bros.: the NES game's engine at other addresses) */
@@ -68,6 +70,7 @@
 #define CAMERA_SHIFT 112               /* objects up to 128 px beside the screen land well inside the moved one */
 #define EDGE 8                         /* the sprite columns the game hides at each edge */
 #define FILL_W 256                     /* the page drawn before an area's start page */
+#define FILL_SOLID_W 128               /* the part of it next to the start page that also gets its collision */
 static const char vs_smb_sha1[] = "b21aa940728ed80c72ee23c251c96e42cc84b2d6";
 /* what tells one area from another: world, level, area number, area type and the offset of its data
    (not the area pointer, which the enemy data's pipe objects change to their destination during play) */
@@ -113,8 +116,10 @@ void widescreen_attach(void) {
         sys.hook = engine_hook;
         sys.hook_pc[0] = ENGINE_START;
         sys.hook_pc[1] = AREA_INIT;
-    } else if (sys.hook == engine_hook) {
-        sys.hook = NULL;
+        bandwalk_attach(1);
+    } else {
+        if (sys.hook == engine_hook) sys.hook = NULL;
+        bandwalk_attach(0);
     }
 }
 
@@ -169,7 +174,9 @@ static struct {
     int ok;                     /* vram holds the page before start */
     uint8_t id[5];              /* the area */
     uint8_t vram[4096];         /* the nametables with that page rendered */
-} fill = { 0, -1, 0, { 0 }, { 0 } };
+    uint8_t block[0x1A0];       /* and the block buffer */
+    uint32_t solid;             /* the copy whose page went into the game's block buffer (widescreen_fill_collision) */
+} fill = { .start = -1 };
 
 static void nt_write(uint8_t *vram, uint16_t a, uint8_t v) {
     a &= 0x3FFF;
@@ -223,7 +230,30 @@ static void make_fill(void) {
             if (sram[RAM_PARSER_TASKNUM] == 0) break;     /* a column set and its attributes are done */
         }
     }
+    memcpy(fill.block, sram + RAM_BLOCK_BUFFER, sizeof fill.block);
     fill.ok = 1;
+}
+
+/* An area started part-way is rendered by the game from its start page on, after InitializeArea cleared
+   the whole block buffer, so the page before it, which the band draws, would have nothing to stand on.
+   Called as the area starts (bandwalk.c, with the start page), this gives the game that page's
+   collision from the band's rendering of it, for the columns the player can reach beside the screen:
+   its last 128 pixels, whose place in the block buffer the next page's last columns take only once
+   the parser is 512 pixels past them, out of reach. (The first 128 share theirs with the next page's
+   first columns, which the game renders at once.) */
+int widescreen_fill_collision(int start_page) {
+    if (!area_copy.valid) return 0;
+    if (fill.gen != area_copy.gen) make_fill();
+    if (!fill.ok || fill.start != start_page * 256) return 0;
+    for (int k = 0; k < 3; k++)   /* world, level, area number: set before the start (the rest of the id is not yet) */
+        if (fill.id[k] != ram[area_id_addr[k]]) return 0;
+    int half = ((start_page - 1) & 1) * 0xD0, col = (FILL_W - FILL_SOLID_W) / 16;
+    for (int row = 0; row < 13; row++) {
+        int o = half + row * 16 + col;
+        memcpy(ram + RAM_BLOCK_BUFFER + o, fill.block + o, (size_t)(16 - col));
+    }
+    fill.solid = fill.gen;
+    return 1;
 }
 
 /* ---- the background ---- */
@@ -274,6 +304,29 @@ static int level_window(int *lo, int *hi) {
     if (*lo < -left) *lo = -left;        /* nothing before the start of the area */
     *hi = front - MARGIN - left;
     return 1;
+}
+
+/* The band's extent to the left of the screen as the RAM gives it (bandwalk.c's wall): the oldest
+   nametable column (as level_window, without the PPU's lines, which are not machine state), which the
+   block buffer holds as well; after a part-way start nothing before the start page unless the page
+   before it went into the block buffer (widescreen_fill_collision), and then only that part of it;
+   nothing before the area's start */
+int widescreen_level_left(void) {
+    int left = ram[RAM_SCREEN_LEFT_PAGE] * 256 + ram[RAM_SCREEN_LEFT_X];
+    int front = ram[RAM_PARSER_PAGE] * 256 + ram[RAM_PARSER_COLUMN] * 16;
+    int ahead = front - (left + 256);
+    if (ahead < 0 || ahead > 192) return 0;
+    int leftmost = front - 512 + MARGIN;
+    if (leftmost < 0) leftmost = 0;
+    if (!sys.sandbox && area_copy.valid && fill.gen != area_copy.gen) make_fill();
+    int fill_here = widescreen_fill && fill.start >= 0 && left >= fill.start;
+    for (int k = 0; fill_here && k < 5; k++)
+        if (ram[area_id_addr[k]] != fill.id[k]) fill_here = 0;
+    if (fill_here) {
+        int solid = (fill.ok && fill.solid == fill.gen) ? fill.start - FILL_SOLID_W : fill.start;
+        if (leftmost < solid) leftmost = solid;
+    }
+    return left > leftmost ? left - leftmost : 0;
 }
 
 /* one background pixel of line ly at picture column sx from the nametables in vram; *opaque = not colour 0 */

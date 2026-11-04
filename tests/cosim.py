@@ -1,7 +1,7 @@
 """Cosimulation check: run the same scripted session through the interpreter
 and through the recompiled code and compare per-frame state hashes.
 
-usage: python tests/cosim.py [--frames N] [--keys SPEC] [--dip HEX] [--rom FILE]
+usage: python tests/cosim.py [--frames N] [--keys SPEC] [--dip HEX] [--rom FILE] [--levels | --walk N]
 
 Exit code 0 means every frame matched (CPU registers and cycle count, RAM,
 work RAM, framebuffer, OAM, palettes, nametables, bank registers).
@@ -49,6 +49,24 @@ def level_keys(frames):
     return ";".join(ev)
 
 
+# walking into the widescreen band left of the screen (runtime/bandwalk.c), free play in 1-1: into the
+# band and waiting there for the first Goomba (a death beside the screen), the same with a stomp there
+# and a run on through the level, walking left near the area's start (the wall at its first pixel), and
+# after a restart at a halfway page (poked to 4 while the first Goomba kills him) walking into the page
+# drawn before it, which gets its collision as the area starts
+WALK_SCENARIOS = {
+    "death": (1500, "400:SELECT;404:-;640:RIGHT;780:LEFT;1000:-", ""),
+    "stomp": (2600, "400:SELECT;404:-;640:RIGHT;780:LEFT;1000:-;1234:A;1242:-;1320:RIGHT+B;1350:RIGHT+B+A;"
+                    "1380:RIGHT+B;1420:LEFT;1520:RIGHT+B;1560:RIGHT+B+A;1600:RIGHT+B;1700:LEFT;1820:RIGHT+B+A;"
+                    "1860:RIGHT+B;1940:LEFT+B;2040:RIGHT+B;2080:RIGHT+B+A;2120:RIGHT+B;2240:LEFT;2400:RIGHT+B+A;"
+                    "2440:RIGHT+B", ""),
+    "start": (1100, "400:SELECT;404:-;640:RIGHT;712:LEFT;1000:-;1040:RIGHT;1080:LEFT", ""),
+    "halfway": (1900, "400:SELECT;404:-;640:RIGHT;1100:-;1350:LEFT;1500:-;1540:RIGHT;1560:LEFT;1600:-;"
+                      "1640:RIGHT+B;1680:RIGHT+B+A;1720:RIGHT+B;1800:LEFT",
+                ";".join(f"{f}:75B=4" for f in range(1000, 1130, 2))),
+}
+
+
 def level_pokes(world, area):
     # SMB's WorldNumber $075F, LevelNumber $075C (shown) and AreaNumber $0760 (which area of the world)
     return f"405:75F={world:X},75C={min(area, 3):X},760={area:X}"
@@ -89,6 +107,9 @@ def main():
     ap.add_argument("--rom", default=None)
     ap.add_argument("--levels", action="store_true",
                     help="instead: every world, areas 0-4, each started through RAM pokes (free play, 3000 frames each)")
+    ap.add_argument("--walk", type=int, default=0, metavar="N",
+                    help="instead: walking into the widescreen band, N pixels beyond the screen's left edge "
+                         "(runtime/bandwalk.c; the Deck's view has 42)")
     args = ap.parse_args()
     rom = args.rom or (glob.glob(os.path.join(ROOT, "rom", "*.nes")) or [None])[0]
     if not rom:
@@ -104,6 +125,12 @@ def main():
             for area in range(5):
                 ok &= compare(interp, native, rom, 3000, level_keys(3000), "07",
                               ["--poke", level_pokes(world, area)], f" world {world + 1} area {area}")
+        sys.exit(0 if ok else 1)
+    if args.walk:
+        ok = True
+        for name, (frames, keys, pokes) in WALK_SCENARIOS.items():
+            extra = ["--ws-walk", str(args.walk)] + (["--poke", pokes] if pokes else [])
+            ok &= compare(interp, native, rom, frames, keys, "07", extra, f" walk {args.walk} {name}")
         sys.exit(0 if ok else 1)
     keys = args.keys or default_keys(args.frames)
     sys.exit(0 if compare(interp, native, rom, args.frames, keys, args.dip, [], "") else 1)

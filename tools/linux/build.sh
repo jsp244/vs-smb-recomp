@@ -19,6 +19,7 @@ ROM=$(ls rom/*.nes rom/*.zip 2>/dev/null | head -n 1 || true)
 if [ -n "$ROM" ]; then
     echo "== cosimulation (interpreter vs native code)"
     python3 tests/cosim.py --frames 3000
+    python3 tests/cosim.py --walk 42
     # no display in a container: SDL's offscreen video and dummy audio drivers
     export SDL_VIDEODRIVER=offscreen SDL_AUDIODRIVER=dummy
     for b in build-linux build-deck; do

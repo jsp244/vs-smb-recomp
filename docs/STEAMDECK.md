@@ -3,7 +3,8 @@ VS. Super Mario Bros. native port - Steam Deck edition
 
 This build starts in fullscreen at the Deck's own 1280x800 with the 16:10 widescreen
 view (during play the level the game keeps beyond the screen's edges fills the sides,
-with the enemies in it),
+with the enemies in it, and Mario can walk left into it to the edge of the screen:
+16 pixels in this view, 42 with Integer scaling on the Graphics tab),
 and the menus are driven with the Deck's controls. It contains no game data: you need
 your own dump of the VS. Super Mario Bros. board (a .nes file, or MAME's suprmrio.zip).
 

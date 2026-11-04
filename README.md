@@ -95,6 +95,22 @@ area: InitializeArea, from a copy of RAM made as the area starts, runs again in 
 sandbox told to start a page earlier, and the area parser renders the page into a
 copy of the nametables, which the left band reads.
 
+**Walking into the left band.** The game stops Mario at the left edge of its 256-pixel
+screen, even where a widescreen view shows the level further left. The port lets him
+walk on to the edge of the picture you see, as far as the band shows the level: 32
+pixels in a 16:9 window, 16 in the 16:10 view the Deck starts in, 42 with Integer
+filling the Deck's screen, 64 on a 1920x1080 one (at most 104). The screen still never
+scrolls back. Enemies and power-ups work there as on the screen: the game's own
+collision code decides a stomp, a hit or a mushroom, run with both objects moved to
+where its 8-bit screen positions do not wrap. A score earned there shows at the
+screen's left edge. After a halfway restart or a pipe, the page drawn before the start
+gets its ground as well (the game itself only knows the level from the start page on).
+Not covered: riding a platform into the band, hammers and
+platforms touching him while he is wholly in it, and fireballs thrown from it (the
+game erases them at once as off the screen). `walk_to_edge=0` in `vssmb.ini` keeps
+the game's own edge. A few instructions marked `patch` hand the game's state to
+`runtime/bandwalk.c` (`docs/ARCHITECTURE.md` has the details).
+
 Note on distribution: a prebuilt executable necessarily embeds the recompiled game
 logic (as the N64 recompilation releases do), while every asset still comes from the
 player's own dump at run time. Building from source as described below keeps
@@ -128,6 +144,12 @@ Verified (headless harness with scripted input and RAM pokes, screenshots inspec
   level runs (`--ws-oam-check`); the picture between the 8-pixel edge columns is
   unchanged; seams checked at both edges (Goombas, Koopas, Buzzy Beetles, a Blooper,
   Piranha Plants); the page before a halfway respawn drawn into the left band
+* walking into the left band (`tests/cosim.py --walk N`, N = 42, 64, 104): in and back,
+  a Goomba's hit and a stomp there, the wall at an area's start, standing on the drawn
+  page before a halfway restart; bit-identical between both paths with the patches working, the band's
+  sprites still the PPU's exactly (`--ws-oam-check`), and nothing changed with them off
+  (the 9,000-frame session and the 40 level runs); a real 16:9 window and the Deck's
+  1280x800 views (Fit 16 pixels, Integer 42) checked by screenshots
 
 Not yet verified: a full play-through to the ending by a person, the name entry for a
 top score, and two-player games beyond starting one.

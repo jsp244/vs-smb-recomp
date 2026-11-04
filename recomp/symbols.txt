@@ -1,10 +1,26 @@
-; Address labels for VS. Super Mario Bros. Format: ADDR name [hook]. Lines starting with ; are ignored.
+; Address labels for VS. Super Mario Bros. Format: ADDR name [hook] [patch]. Lines starting with ; are ignored.
 ; A label starting with JumpEngine marks a routine that jumps through the word table after its JSR.
 ; "hook": the generated code calls the runtime (sys.hook) just before that instruction runs.
+; "patch": the same with sys.patch, which may change the machine (runtime/bandwalk.c: walking into the
+; widescreen band left of the screen; it changes nothing unless the frontend turns that on).
 ; These are annotations written for this project; they contain no game data.
 8000 reset
 810A nmi
 81FE irq
 90BB JumpEngine
 965C InitializeArea hook   ; an area starts (from its halfway or entrance page too); widescreen.c re-runs it a page earlier
+9687 AreaStartPage patch        ; InitializeArea: STA BackloadingFlag with the start page (the page before it gets its collision)
 ADAB GameEngine hook   ; the frame's object logic and sprite building; widescreen.c re-runs it beside the screen
+AE52 ScrollPlayerPos patch      ; ScrollHandler: CMP #$50 with the player's last screen position (wraps beside the screen)
+AEB2 PlayerOffscrBits patch     ; ChkPOffscr: STA $00 with his horizontal offscreen bits (the left wall)
+ADC6 PlayerGfxBuilt patch       ; GameEngine: his sprites are built (columns beside the screen hidden)
+B007 PlayerBoxBuilt patch       ; PlayerSubs: his bounding box is built (clipped at the screen's left edge)
+D7B7 EnemyOffscrSkip patch      ; PlayerEnemyCollision: BNE past an enemy not wholly on the screen
+D7C8 EnemyBoxTest patch         ; ... JSR PlayerCollisionCore (boxes moved where they do not wrap)
+D7CB EnemyBoxTested patch       ; ... after it (boxes put back)
+D7F4 EnemyContactSkip patch     ; HandlePECollisions: BNE past an enemy touched before or not wholly on the screen
+D978 EnemyScoreX patch          ; SetupFloateyNumber: STA FloateyNum_X_Pos, the enemy's screen X
+D4E8 PlayerScoreX patch         ; the same with the player's screen X
+D734 HammerTested patch         ; BCC after a hammer's test against the player
+DACA LargePlatTested patch      ; BCC after a large platform's test against the player
+DAF6 SmallPlatTested patch      ; BCS after a small platform's test against the player

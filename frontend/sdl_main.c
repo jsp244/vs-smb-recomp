@@ -86,6 +86,7 @@ typedef struct {
     int shader_strength; /* 0 light, 1 medium, 2 strong */
     int overscan;        /* crop 8 lines top/bottom */
     int no_sprite_limit; /* 1: draw every sprite on a line instead of the hardware's 8 (no flicker) */
+    int walk_to_edge;    /* 1: in a widescreen view the player may walk into the band left of the picture */
     int volume;          /* 0..100 */
     int lowlat;          /* 1: pace on the display's vblank with frame delay (60 Hz class displays) */
     int runahead;        /* frames of run-ahead, 0..3 (the game's own input latency is 2) */
@@ -105,7 +106,7 @@ static config_t cfg = {
     .key = { SDLK_x, SDLK_z, SDLK_RSHIFT, SDLK_RETURN, SDLK_UP, SDLK_DOWN, SDLK_LEFT, SDLK_RIGHT, SDLK_2, SDLK_BACKSPACE, SDLK_TAB },
     .pad = { -1, -1, -1, -1, -1, -1, -1, -1, -1, SDL_CONTROLLER_BUTTON_RIGHTSHOULDER, INPUT_PAD_RT },
     .window_size = 3, .display_mode = 0, .resolution = 0, .res_w = 0, .res_h = 0, .scaling = 1, .aspect = 1, .colors = 0, .filter = 2,
-    .shader = 0, .shader_strength = 1, .overscan = 1, .no_sprite_limit = 0, .volume = 100,
+    .shader = 0, .shader_strength = 1, .overscan = 1, .no_sprite_limit = 0, .walk_to_edge = 1, .volume = 100,
     .lowlat = 1, .runahead = GAME_LAG, .audio_latency = 1, .rewind = 1, .state_slot = 1,
     .coinage = 0, .lives = 0, .bonus = 0, .fast_timer = 0, .continue_lives = 0, .rom = ""
 };
@@ -405,7 +406,8 @@ static void write_config(void) {
     fprintf(f, "shader_strength=%d     ; 0 light, 1 medium, 2 strong\n", cfg.shader_strength);
     fprintf(f, "overscan=%d            ; crop 8 lines at the top and bottom\n", cfg.overscan);
     fprintf(f, "no_sprite_limit=%d     ; 1: draw every sprite on a line instead of 8 (no flicker)\n", cfg.no_sprite_limit);
-    fprintf(f, "low_latency=%d         ; 1: frame delay, locked to the display (Windows, Android) or timer pacing without vsync (Linux); 0: plain timer (Linux: vsync)\n", cfg.lowlat);
+    fprintf(f, "walk_to_edge=%d        ; 1: in a widescreen view the player may walk left into the band beside the picture\n", cfg.walk_to_edge);
+    fprintf(f, "low_latency=%d        ; 1: frame delay, locked to the display (Windows, Android) or timer pacing without vsync (Linux); 0: plain timer (Linux: vsync)\n", cfg.lowlat);
     fprintf(f, "runahead=%d            ; frames of run-ahead (0-3); the game shows a press %d frame%s after it\n", cfg.runahead, GAME_LAG, GAME_LAG == 1 ? "" : "s");
     fprintf(f, "audio_latency=%d       ; 0 low (~25 ms), 1 normal (~45 ms), 2 safe (~90 ms)\n", cfg.audio_latency);
     fprintf(f, "volume=%d\n", cfg.volume);
@@ -469,6 +471,7 @@ static void load_config(void) {
         else if (!strcmp(key, "shader_strength")) { int v = atoi(val); if (v >= 0 && v <= 2) cfg.shader_strength = v; }
         else if (!strcmp(key, "overscan")) cfg.overscan = atoi(val) ? 1 : 0;
         else if (!strcmp(key, "no_sprite_limit")) cfg.no_sprite_limit = atoi(val) ? 1 : 0;
+        else if (!strcmp(key, "walk_to_edge")) cfg.walk_to_edge = atoi(val) ? 1 : 0;
         else if (!strcmp(key, "rewind_enabled")) cfg.rewind = atoi(val) ? 1 : 0;
         else if (!strcmp(key, "state_slot")) { int v = atoi(val); if (v >= 1 && v <= 9) cfg.state_slot = v; }
         else if (!strcmp(key, "coinage")) { int v = atoi(val); if (v >= 0 && v <= 7) cfg.coinage = v; }
@@ -550,6 +553,26 @@ static void source_rect(SDL_Rect *src) {
     } else {
         src->x = 0; src->w = FB_W;
     }
+}
+
+/* how far left of the screen the player may walk (bandwalk.c): as far as the game's picture shows
+   the band there, in whole columns where Integer filling the screen cuts the outermost one */
+static int walk_band(void) {
+    if (!cfg.walk_to_edge || !widescreen_on() || !renderer) return 0;
+    int ww, wh;
+    SDL_GetRendererOutputSize(renderer, &ww, &wh);
+    if (cfg.display_mode == 1 && cfg.res_w > 0) { ww = cfg.res_w; wh = cfg.res_h; }
+    pic_out_w = ww;   /* the game's picture, not the menu's backdrop */
+    pic_out_h = wh;
+    int k = integer_fill();
+    if (k) {
+        double px = k * pixel_aspect(), bar = (pic_out_w - FB_W * px) / 2;
+        int b = bar > 0 ? (int)(bar / px + 1e-6) : 0;
+        return b > WS_BAND ? WS_BAND : b;
+    }
+    SDL_Rect src;
+    source_rect(&src);
+    return WS_BAND - src.x;
 }
 
 static void dest_rect(int ww, int wh, const SDL_Rect *src, SDL_Rect *dst) {
@@ -2327,6 +2350,7 @@ int main(int argc, char **argv) {
             sys.vs_dip = dip_bits();   /* as a game started from the menu */
             nes_power();
         }
+        widescreen_walk = walk_band();   /* as in play */
         for (int i = 0; i < gameshot_frames; i++) {   /* Start once to leave the title, unless starting from a state */
             vs_input((!shot_state && i >= 150 && i < 160) ? 0x08 : 0);
             nes_run_frame();
@@ -2337,8 +2361,8 @@ int main(int argc, char **argv) {
         SDL_RenderPresent(renderer);
         draw_game(); draw_overlays(1);
         int rc = write_window_png(gameshot_png);
-        printf("game-shot: %s -> %s (shader %s, resolution %s, display mode %d)\n", rc == 0 ? "wrote" : "FAILED", gameshot_png,
-               shader_names[cfg.shader], res_names[cfg.resolution], cfg.display_mode);
+        printf("game-shot: %s -> %s (shader %s, resolution %s, display mode %d, band walk %d)\n", rc == 0 ? "wrote" : "FAILED",
+               gameshot_png, shader_names[cfg.shader], res_names[cfg.resolution], cfg.display_mode, widescreen_walk);
         font_quit(); SDL_DestroyRenderer(renderer); SDL_DestroyWindow(window); SDL_Quit();
         return rc == 0 ? 0 : 1;
     }
@@ -2432,6 +2456,7 @@ int main(int argc, char **argv) {
     if (stats_file) fprintf(stats_file, "pacing: %s, display %.0f Hz, %d vblank(s) per frame, run-ahead %d\n",
                             pace_names[pace_mode], refresh_hz, vsync_div, cfg.runahead);
     while (running) {
+        widescreen_walk = walk_band();
         int in_game = (state == ST_GAME && !paused);
         /* fast-forward: a press while a rewound stretch can still be undone goes forward through
            it (until released); otherwise it speeds the game up */

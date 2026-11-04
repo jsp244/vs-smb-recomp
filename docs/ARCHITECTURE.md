@@ -28,6 +28,7 @@ runtime/cart.c       iNES / NES 2.0 loader, hashes, Vs. System detection
 runtime/romzip.c     MAME's suprmrio.zip as an iNES image (zip directory, inflate, CRC checks)
 runtime/palette.c    NTSC composite palette, the 2C03 and RP2C04 RGB palettes
 runtime/widescreen.c the level beside the picture, from the nametables, with its objects (CPU sandbox)
+runtime/bandwalk.c   the player walking into the left band (patches to the game's wall, scroll, sprites, collisions)
 runtime/sys.c        power/reset, frame loop, save states
 runtime/headless.c   command-line harness (tests, scripting, pokes, screenshots, traces, coverage)
 runtime/recomp_rt.h  helpers used by the generated code
@@ -40,7 +41,7 @@ frontend/http.c      HTTPS GET for it: WinHTTP, libcurl loaded at run time, or J
 ```
 
 Options that are not machine state (`ppu_no_sprite_limit`, the DIP switches in
-`sys.vs_dip`) live outside the saved structs, so a save state or a rewind step
+`sys.vs_dip`, `widescreen_walk`) live outside the saved structs, so a save state or a rewind step
 never changes a setting. Save states leave out the PPU frame buffer (and the
 per-line scroll record after it), which every frame rewrites, and the APU's
 sample ring; a state is about 24 KB.
@@ -166,7 +167,9 @@ and bank registers. The default session is a coin-op one (three coins, one held
 too long, 1P start, running and jumping through deaths, game over and the
 continue screen); `--levels` starts every world's areas 0-4 by poking the world
 and area number (`$075F`, `$075C`, `$0760`) after the start and letting the first
-death reload the level. On a mismatch, build the tracing variant
+death reload the level; `--walk N` walks into the widescreen band with the player
+allowed N pixels beyond the screen's left edge (a death and a stomp there, the
+area's start, the page before a halfway restart). On a mismatch, build the tracing variant
 (`make BUILD=build-trace RECOMP_DEFS=-DRECOMP_TRACE headless-recomp`) and diff the
 per-instruction traces (`--trace FILE --trace-start FRAME [--watch ADDR]`).
 
@@ -231,6 +234,36 @@ nametable writes it queues in VRAM_Buffer2 ($0341, the NMI's format) to a copy o
 the nametables. Band pixels left of the start page come from that copy while the
 area on screen (world, level, area number, type and data offset) is the one it was
 made for.
+
+**Walking into the band.** The game stops the player at its screen's left edge
+(ChkPOffscr puts him back there when his horizontal offscreen bits say he is
+beyond it), and everything that places him works in 8-bit screen coordinates,
+which wrap round to the right edge once he is left of it. Instructions marked
+`patch` in `recomp/symbols.txt` call `sys.patch` just before they run: the
+generated code through `PATCH(addr)`, the interpreter and the sandbox through
+`sys_patch_map` (a bit per address). Unlike a hook a patch may change registers,
+flags and memory, so it may depend only on the machine and the settings.
+`runtime/bandwalk.c` installs fourteen, which change nothing while
+`widescreen_walk` is 0; the frontend sets it every frame to the band its view
+shows on the left (whole columns where Integer filling the screen cuts the
+outermost one), and `nes-headless --ws-walk N` sets it for tests.
+
+| patched | what changes |
+|---|---|
+| `$AEB2` ChkPOffscr | the offscreen bits read "on the screen" while he is within the band; at its edge he is stopped as KeepOnscr stops him at the screen's (position, and speed unless right is held). The edge is never beyond what the band shows of the level (`widescreen_level_left`: the parser's frontier less 512 plus the 16-pixel margin, the area's first pixel, or the page drawn before a part-way start) nor 104 pixels (the band's sprites come from the engine re-run 112 pixels out); standing on a platform keeps the screen's edge |
+| `$AE52` ScrollHandler | the scroll test gets his real position instead of last frame's wrapped 8-bit one |
+| `$ADC6` GameEngine | his sprite columns that wrapped to the right edge are hidden; the left band's re-run draws him |
+| `$B007` PlayerSubs | his bounding box is clipped at the screen's left edge, as CheckLeftScreenBBox clips every other object's |
+| `$D7B7` PlayerEnemyCollision, `$D7F4` HandlePECollisions | an enemy or power-up the game skips as not wholly on the screen is let through when its box touches his beside it |
+| `$D7C8` / `$D7CB` around PlayerCollisionCore | both boxes are moved for the test into an 8-bit frame where neither wraps and put back after it, so the game's own rules decide (stomp, injury, power-up) |
+| `$D978`, `$D4E8` SetupFloateyNumber | a score for something beside the screen is shown at its left edge |
+| `$D734`, `$DACA`, `$DAF6` | a hammer or platform does not touch him while he is wholly beside the screen (his box is then the game's empty one at the edge) |
+| `$9687` InitializeArea | at a part-way start (the start page in A) the page before it gets its collision: InitializeArea cleared the block buffer ($0500-$069F, 13 rows of 16 metatiles per page parity) and the game renders from the start page on, so `widescreen_fill_collision` copies the last 128 pixels of the band's rendering of that page (`make_fill`'s block buffer) into the game's. Those slots belong to the next page's last columns only once the parser is 512 pixels past them, out of reach. Without that copy (the walk switched on later in the area) the wall stays at the start page |
+
+The screen still never scrolls back. `tests/cosim.py --walk N` (a death and a stomp in the
+band, the area's start, a halfway restart) stays bit-identical with the patches working, and the band's repeat of the engine still builds the PPU's
+sprites exactly (`--ws-oam-check`); with `widescreen_walk` 0 the standard session
+and the 40 level runs are unchanged.
 
 ## Known inaccuracies
 
@@ -325,5 +358,9 @@ vignette; then the target is drawn to the window either 1:1, scaled, or as a
   past the old edge, where the game creates them; spawning them earlier would change
   the game itself. Hammer Bros and Piranha Plants are erased 16 pixels into the left
   band, as the game erases them.
+* Walking into the band: riding a platform into it, hammers and platforms touching
+  the player there, and his fireballs (the game erases one thrown from the band at
+  once, as off the screen) would each need patches of their own: their positions,
+  sprites and boxes wrap the way his do.
 * Keeping the top score between sessions (the board keeps it only while powered).
 * A 2P start button on the phone edition's on-screen controller.

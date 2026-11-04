@@ -29,7 +29,8 @@ BUILD   ?= build
 GEN     := generated
 
 RUNTIME_SRC := runtime/cpu.c runtime/mem.c runtime/cart.c runtime/mapper.c runtime/ppu.c \
-               runtime/apu.c runtime/sys.c runtime/png.c runtime/palette.c runtime/romzip.c runtime/widescreen.c
+               runtime/apu.c runtime/sys.c runtime/png.c runtime/palette.c runtime/romzip.c runtime/widescreen.c \
+               runtime/bandwalk.c
 RUNTIME_OBJ := $(patsubst runtime/%.c,$(BUILD)/%.o,$(RUNTIME_SRC))
 
 GEN_SRC := $(wildcard $(GEN)/*.c)

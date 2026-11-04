@@ -28,8 +28,10 @@ Graphics      Display mode (windowed / fullscreen / fullscreen exclusive),
               screen with more of the level on each side), aspect ratio (square
               pixels 8:7 / 4:3 CRT / 16:9 or 16:10 widescreen: the level goes on
               beside the picture during play, with the enemies the game keeps
-              there, also after a death or a pipe; other screens get black bars,
-              nothing is stretched),
+              there, also after a death or a pipe, and Mario can walk left into
+              it to the edge of the picture; other screens get black bars,
+              nothing is stretched; walk_to_edge=0 in vssmb.ini keeps the
+              game's own edge),
               colors (Arcade: the cabinet's RGB monitor / NES: the colours the
               console version shows), filter (nearest / linear / sharp),
               shader (off / scanlines / CRT / CRT curved / glow) and its strength,

@@ -191,6 +191,8 @@ static void usage(void) {
         "                      of the objects beside the picture) and compare its sprites with the PPU's\n"
         "  --no-ws-sprites     widescreen PNGs without the objects beside the picture\n"
         "  --no-ws-fill        ... and without the page drawn before an area entered part-way\n"
+        "  --ws-walk N         the player may walk N pixels beyond the screen's left edge where the band\n"
+        "                      beside it shows the level (the frontend's widescreen views; bandwalk.c)\n"
         "  --wav FILE          write audio to a 48 kHz WAV\n"
         "  --trace FILE        write a per-instruction trace (interpreter)\n"
         "  --nestest N         nestest mode: start at $C000 and run N instructions\n"
@@ -220,6 +222,7 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i], "--ws-oam-check")) oam_check = 1;
         else if (!strcmp(argv[i], "--no-ws-sprites")) widescreen_sprites = false;
         else if (!strcmp(argv[i], "--no-ws-fill")) widescreen_fill = false;
+        else if (!strcmp(argv[i], "--ws-walk") && i + 1 < argc) widescreen_walk = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--dip") && i + 1 < argc) dip = (int)strtol(argv[++i], NULL, 16);
         else if (!strcmp(argv[i], "--poke") && i + 1 < argc) parse_pokes(argv[++i]);
         else if (!strcmp(argv[i], "--palette") && i + 1 < argc) pal_out = argv[++i];
@@ -266,7 +269,7 @@ int main(int argc, char **argv) {
         if (f) fclose(f);
     }
     if (input) load_input_script(input);
-    if (wide || oam_check) widescreen_attach();
+    if (wide || oam_check || widescreen_walk) widescreen_attach();
 
     if (recomp) {
         if (!recomp_rom_sha1) { fprintf(stderr, "this build has no recompiled code\n"); return 1; }
