@@ -1314,6 +1314,13 @@ static void build_intermission(void) {
 
 static void write_hud_to(sbx_t *s);
 
+/* a line of a screen that is not a level: the picture's 256 pixels, black bars beside it in the
+   widescreen canvas (as with the arcade graphics) */
+static void screen_line(const snesppu_t *p, int line, int x, int w, uint32_t *row) {
+    snesppu_line(p, line, x, w, row);
+    for (int px = x; px < x + w; px++) if (px < 0 || px >= 256) row[px - x] = 0xFF000000u;
+}
+
 static int render_intermission(uint32_t *out, int stride, int x, int y, int w, int h) {
     build_intermission();
     if (!inter.ok) return 0;
@@ -1324,7 +1331,7 @@ static int render_intermission(uint32_t *out, int stride, int x, int y, int w, i
     p.inidisp = 0x0F;
     snesppu_load_oam(&p, &sb_screen->wram[OAM_BUFFER]);
     for (int line = y; line < y + h && line < 240; line++)
-        snesppu_line(&p, line, x, w, out + (size_t)(line - y) * (size_t)stride);
+        screen_line(&p, line, x, w, out + (size_t)(line - y) * (size_t)stride);
     return 1;
 }
 
@@ -1687,7 +1694,7 @@ static int render_text_screen(uint32_t *out, int stride, int x, int y, int w, in
     for (int b = 0; b < 4; b++) { p.hofs[b] = 0; p.vofs[b] = 0; }
     build_sprites(&p, ram, 0, 1, ppu.oam, 0, NULL);
     for (int line = y; line < y + h && line < 240; line++)
-        snesppu_line(&p, line, x, w, out + (size_t)(line - y) * (size_t)stride);
+        screen_line(&p, line, x, w, out + (size_t)(line - y) * (size_t)stride);
     return 1;
 }
 

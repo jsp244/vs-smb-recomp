@@ -177,14 +177,20 @@ Verified (headless harness with scripted input and RAM pokes, screenshots inspec
   (lava, fire bars, lifts), the treetop and mushroom levels, Lakitu, Bullet Bill and
   Hammer Bro stages; the title with its banner and the demo scrolling it away, the
   PUSH BUTTON, intermission, game-over and continue screens; 16:9 with the objects
-  beside the picture; the intermission compared with All-Stars' own (run in a reference
-  emulator)
+  beside the picture and the walk into the left band; the intermission compared with
+  All-Stars' own (run in a reference emulator). The emulation is untouched by it: per-frame
+  state hashes are identical with and without it (and with the band walk), and the
+  frontend self-tests pass with it on. The Linux build draws it pixel for pixel as the
+  Windows build does; the Android app (emulator) finds both ROMs in its folder and shows
+  the title, the PUSH BUTTON screen and play remastered; about 2.4 ms per frame for the
+  widescreen canvas on a laptop CPU
 
 Not yet verified: a full play-through to the ending by a person, the name entry for a
 top score, and two-player games beyond starting one. In the remastered graphics: the
 flagpole, Bowser's bridge and the ending, vines and springboards, and the cloud lifts of
 the coin heavens (their sprites are mapped by the same tables, but no scripted run
-reached them).
+reached them), and the Steam Deck itself (its build passes the self-tests in the
+container).
 
 ## Legal note
 
