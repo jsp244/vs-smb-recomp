@@ -204,6 +204,8 @@ static void usage(void) {
         "                      of the objects beside the picture) and compare its sprites with the PPU's\n"
         "  --no-ws-sprites     widescreen PNGs without the objects beside the picture\n"
         "  --no-ws-fill        ... and without the page drawn before an area entered part-way\n"
+        "  --ws-walk N         the player may walk N pixels beyond the screen's left edge where the band\n"
+        "                      beside it shows the level (the frontend's widescreen views; bandwalk.c)\n"
         "  --allstars ROM      the remastered graphics, from this Super Mario All-Stars ROM\n"
         "  --allstars-png FILE write the last frame remastered (with --png-every N: FILE.NNNNN.png every N frames;\n"
         "                      frames it cannot draw are skipped)\n"
@@ -237,6 +239,7 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i], "--ws-oam-check")) oam_check = 1;
         else if (!strcmp(argv[i], "--no-ws-sprites")) widescreen_sprites = false;
         else if (!strcmp(argv[i], "--no-ws-fill")) widescreen_fill = false;
+        else if (!strcmp(argv[i], "--ws-walk") && i + 1 < argc) widescreen_walk = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--allstars") && i + 1 < argc) as_rom = argv[++i];
         else if (!strcmp(argv[i], "--allstars-png") && i + 1 < argc) as_png = argv[++i];
         else if (!strcmp(argv[i], "--allstars-wide") && i + 1 < argc) as_wide = argv[++i];
@@ -292,7 +295,7 @@ int main(int argc, char **argv) {
         if (allstars_load(as_rom, err, sizeof err) != 0) { fprintf(stderr, "All-Stars ROM %s: %s\n", as_rom, err); return 1; }
         if (!quiet) printf("All-Stars ROM: %s (%s)\n", allstars_name(), allstars_sha1());
     }
-    if (wide || oam_check || as_rom) widescreen_attach();
+    if (wide || oam_check || widescreen_walk || as_rom) widescreen_attach();
 
     if (recomp) {
         if (!recomp_rom_sha1) { fprintf(stderr, "this build has no recompiled code\n"); return 1; }

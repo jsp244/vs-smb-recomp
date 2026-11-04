@@ -8,6 +8,7 @@
 
 cpu_t cpu;
 uint8_t ram[2048];
+uint8_t sys_patch_map[8192];
 
 static const uint8_t base_cycles[256] = {
     7,6,2,8,3,3,5,5,3,2,2,2,4,4,6,6,
@@ -145,6 +146,7 @@ static inline void coverage_mark(uint16_t pc) {
 void cpu_step(void) {
     if (sys.trace_hook) sys.trace_hook();
     if (sys.hook && (cpu.pc == sys.hook_pc[0] || cpu.pc == sys.hook_pc[1] || cpu.pc == sys.hook_pc[2])) sys.hook(cpu.pc);
+    if (sys.patch && (sys_patch_map[cpu.pc >> 3] >> (cpu.pc & 7) & 1)) sys.patch(cpu.pc);
     sys.instructions++;
     if (cpu.jammed) { cpu.cycles += 2; if (!sys.sandbox) sys_sync(); return; }
     if (sys.cov) coverage_mark(cpu.pc);

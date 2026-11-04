@@ -43,10 +43,15 @@ hash and remembers it, so this happens once.
 Alternatively put the file in Android/data/org.vssmb.nativeport/files/ on the shared
 storage (org.vssmb.nativeport.touch for the phone app); the app finds it there by itself.
 
+Remastered graphics: with your own Super Mario All-Stars ROM (SNES, USA), choose "Choose
+All-Stars ROM..." on the ROM tab and pick the .sfc file (or put it in the same folder as the
+dump); then Graphics > Graphics switches between Arcade and All-Stars.
+
 The picture fills the screen in the shape that matches it: 16:9 widescreen on a 1920x1080
 screen like the AYANEO Pocket EVO's, 4:3 on the Retroid Pocket Nova's 1280x960. During play
 the level the game keeps beyond the screen's edges fills the widescreen sides, with the
-enemies in it. Both can be changed on the Graphics tab.
+enemies in it, and Mario can walk left into it to the edge of the screen. Both can be
+changed on the Graphics tab.
 
 The cabinet
 -----------

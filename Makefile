@@ -30,7 +30,7 @@ GEN     := generated
 
 RUNTIME_SRC := runtime/cpu.c runtime/mem.c runtime/cart.c runtime/mapper.c runtime/ppu.c \
                runtime/apu.c runtime/sys.c runtime/png.c runtime/palette.c runtime/romzip.c runtime/widescreen.c \
-               runtime/cpu816.c runtime/snesppu.c runtime/allstars.c
+               runtime/bandwalk.c runtime/cpu816.c runtime/snesppu.c runtime/allstars.c
 RUNTIME_OBJ := $(patsubst runtime/%.c,$(BUILD)/%.o,$(RUNTIME_SRC))
 
 GEN_SRC := $(wildcard $(GEN)/*.c)

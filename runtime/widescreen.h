@@ -35,7 +35,8 @@ extern bool widescreen_sprites, widescreen_fill;
 
 /* Starts keeping the copy of RAM the objects are drawn from (a hook at the engine's first instruction)
    when the loaded ROM is VS. Super Mario Bros.; widescreen_render calls it itself, calling it after a
-   ROM load makes the objects appear from the first frame. */
+   ROM load makes the objects appear from the first frame. It also installs the patches of
+   bandwalk.c, which do nothing while widescreen_walk is 0. */
 void widescreen_attach(void);
 
 /* The RAM the engine built the sprites the PPU shows from (a copy made at GameEngine's start of the
@@ -52,6 +53,23 @@ int widescreen_level_window(int *lo, int *hi);
    the picture's objects, not new ones. Returns 0 when there is no such run (not in a level, objects
    beside the picture off). */
 int widescreen_band_oam(int side, uint8_t oam[256], int *dx);
+
+/* The player may walk this many pixels beyond the screen's left edge, into the band beside the
+   picture, where the band shows the level (bandwalk.c); 0 keeps the game's own edge. The frontend
+   sets it to the width of the band it shows on the left. A setting, not machine state. */
+extern int widescreen_walk;
+
+/* How many pixels left of the screen's edge the band shows the level now (0 = none), from RAM and
+   the page drawn before a part-way start only, so that every run of a frame gets the same answer. */
+int widescreen_level_left(void);
+
+/* As an area starts part-way from start_page (InitializeArea, bandwalk.c): writes the collision of the
+   page before it, as the band draws it, into the game's block buffer where the player can reach it.
+   Returns 0 when there is no such page (or no copy of this start to render it from). */
+int widescreen_fill_collision(int start_page);
+
+/* bandwalk.c: installs (1) or removes (0) its patches (sys.patch) */
+void bandwalk_attach(int on);
 
 /* Self-check of the objects: runs the engine run whose sprites the PPU shows again, with the camera
    where it was, and compares the sprites it builds with the PPU's. Returns 1 when identical, 0 when

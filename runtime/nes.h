@@ -256,6 +256,11 @@ typedef struct {
        code (the instructions recomp/symbols.txt marks "hook"); it may look at the machine, never change it */
     void   (*hook)(uint16_t pc);
     uint16_t hook_pc[3];
+    /* called just before an instruction whose bit is set in sys_patch_map runs (the instructions
+       recomp/symbols.txt marks "patch"), by the interpreter, the recompiled code and the sandbox
+       alike; unlike a hook it may change registers, flags and memory (a change to the game's rules
+       that some setting asks for), so it must depend only on the machine and the settings */
+    void   (*patch)(uint16_t pc);
     bool     sandbox;           /* cpu_sandbox_run is running: hardware writes are dropped, reads refused, no time passes */
     bool     sandbox_fault;     /* the sandboxed code tried to read the hardware */
     bool     coverage;
@@ -273,6 +278,7 @@ extern mapper_t mapper;
 extern cart_t   cart;
 extern sys_t    sys;
 extern uint8_t  ram[2048];
+extern uint8_t  sys_patch_map[8192];   /* one bit per CPU address: sys.patch runs before that instruction */
 
 /* ------------------------------------------------------------------ */
 /* Function prototypes                                                 */

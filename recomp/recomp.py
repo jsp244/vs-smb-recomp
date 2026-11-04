@@ -162,7 +162,7 @@ class Unit:
 
 
 class Recompiler:
-    def __init__(self, prg, prg_mode, max_routine, symbols, flat=False, hooks=()):
+    def __init__(self, prg, prg_mode, max_routine, symbols, flat=False, hooks=(), patches=()):
         self.prg = prg
         self.flat = flat
         self.nbanks = 1 if flat else len(prg) // 0x2000
@@ -170,6 +170,7 @@ class Recompiler:
         self.max_routine = max_routine
         self.symbols = symbols
         self.hooks = set(hooks)    # instructions the runtime looks at before they run (HOOK in recomp_rt.h)
+        self.patches = set(patches)  # and those it may change the machine before (PATCH)
         self.units = {}            # (bank, base) -> Unit
         self.ext_refs = collections.defaultdict(set)  # slot base -> set of target addrs (swappable slots)
         self.ext_pending = collections.defaultdict(set)
@@ -465,6 +466,8 @@ class Recompiler:
         hexb = " ".join(f"{b:02X}" for b in ins.raw)
         label = f" <{sym}>" if sym else ""
         hook = f" HOOK(0x{a:04X});" if a in self.hooks else ""
+        if a in self.patches:
+            hook += f" PATCH(0x{a:04X});"
         out.append(f"    case 0x{a:04X}: L_{a:04X}: INSN(0x{a:04X});{hook} /* {hexb:<8} {ins.text()}{label} */")
         body = []
         cyc = f"CYC({ins.cycles});"
@@ -715,10 +718,10 @@ def mame_set_image(path):
 
 
 def load_symbols(path):
-    """ADDR name [hook] lines -> ({addr: name}, {addrs marked hook})"""
-    syms, hooks = {}, set()
+    """ADDR name [hook] [patch] lines -> ({addr: name}, {addrs marked hook}, {addrs marked patch})"""
+    syms, hooks, patches = {}, set(), set()
     if not path or not os.path.exists(path):
-        return syms, hooks
+        return syms, hooks, patches
     for line in open(path):
         line = line.split(";")[0].strip()
         if not line:
@@ -728,7 +731,9 @@ def load_symbols(path):
             syms[int(parts[0], 16)] = parts[1]
             if "hook" in parts[2:]:
                 hooks.add(int(parts[0], 16))
-    return syms, hooks
+            if "patch" in parts[2:]:
+                patches.add(int(parts[0], 16))
+    return syms, hooks, patches
 
 
 def main():
@@ -777,8 +782,8 @@ def main():
     else:
         prg_mode = int(args.prg_mode)
 
-    symbols, hooks = load_symbols(args.symbols)
-    rc = Recompiler(prg, prg_mode, args.max_routine, symbols, flat, hooks)
+    symbols, hooks, patches = load_symbols(args.symbols)
+    rc = Recompiler(prg, prg_mode, args.max_routine, symbols, flat, hooks, patches)
     fixed, swappable = rc.fixed_layout()
     bank_bases = {} if flat else infer_bases(prg, nbanks, set(fixed.values()), swappable, coverage)
     rc.analyse(coverage, bank_bases)

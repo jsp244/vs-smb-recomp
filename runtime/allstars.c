@@ -618,6 +618,7 @@ static struct {
     int      last_col;         /* the column VS. was rendering at the previous parser call */
     bool     resync;           /* VS.'s machine jumped (a state load, rewind, reset): parse again */
     uint16_t bg2_scroll, bg3_scroll;
+    int      bg2_pages;        /* how many pages of layer 2 the area setup filled: they repeat */
 } area;
 
 static const uint16_t area_id_addr[5] = { RAM_WORLD, RAM_LEVEL, RAM_AREA_NUM, RAM_AREA_TYPE, 0x074F };
@@ -679,6 +680,17 @@ static void build_area(const uint8_t *r) {
     w[0xFC] = (uint8_t)((AREA_DATA_COPY + 2) >> 16);
     sb_call(sb, AREA_GRAPHICS, 0, 4000000);
     sb_call(sb, AREA_COLORS, 0, 100000);
+    /* layer 2's pattern: the pages the setup filled ($7E2000 + page * $800; 8 for the hills), repeated
+       along the level and before its start (the bands see layer 2 left of its origin at half speed) */
+    area.bg2_pages = 0;
+    while (area.bg2_pages < 16) {
+        const uint8_t *pg = &w[0x2000 + area.bg2_pages * 0x800];
+        int any = 0;
+        for (int i = 0; i < 0x800 && !any; i++) any = pg[i] != 0;
+        if (!any) break;
+        area.bg2_pages++;
+    }
+    if (!area.bg2_pages) area.bg2_pages = 1;
     w[0x0154] = 0;
     sb_call(sb, SMB1_NMI, 0, 400000);
     memset(area.parsed, 0, sizeof area.parsed);
@@ -958,7 +970,7 @@ static void write_bg2(int scroll, int x0, int w) {
     const uint8_t *ram_map = &sb->wram[0x2000];
     int first = (scroll + x0) >> 3, last = (scroll + x0 + w + 7) >> 3;
     for (int tx = first; tx <= last && tx < first + 64; tx++) {
-        int page = (tx >> 5) & 15, c = tx & 31;
+        int page = ((tx >> 5) % area.bg2_pages + area.bg2_pages) % area.bg2_pages, c = tx & 31;
         int dst_col = tx & 63;
         for (int r = 0; r < 32; r++) {
             const uint8_t *src = ram_map + page * 0x800 + r * 0x40 + c * 2;
@@ -975,7 +987,7 @@ static void write_bg3_clouds(int scroll, int x0, int w) {
     const uint8_t *m16 = &sb->wram[0x13000];
     int first = (scroll + x0) >> 4, last = (scroll + x0 + w + 15) >> 4;
     for (int mx = first; mx <= last && mx < first + 32; mx++) {
-        int page = (mx >> 4) % 12, c = mx & 15;
+        int page = ((mx >> 4) % 12 + 12) % 12, c = mx & 15;   /* the 12 pages wrap, left of the start too */
         for (int r = 0; r < 14; r++) {
             uint8_t t = m16[page * 0xE0 + r * 16 + c];
             for (int k = 0; k < 4; k++) {
