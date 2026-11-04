@@ -181,16 +181,18 @@ Verified (headless harness with scripted input and RAM pokes, screenshots inspec
   All-Stars' own (run in a reference emulator). The emulation is untouched by it: per-frame
   state hashes are identical with and without it (and with the band walk), and the
   frontend self-tests pass with it on. The Linux build draws it pixel for pixel as the
-  Windows build does; the Android app (emulator) finds both ROMs in its folder and shows
-  the title, the PUSH BUTTON screen and play remastered; about 2.4 ms per frame for the
-  widescreen canvas on a laptop CPU
+  Windows build does; on the Steam Deck (offscreen, in a scratch folder) the Deck build
+  finds the All-Stars ROM next to the dump, passes all its self-tests and draws the
+  remastered picture; the Android app (emulator) finds both ROMs in its folder and shows
+  the title, the PUSH BUTTON screen and play remastered. The whole 512-pixel widescreen
+  canvas costs about 2.4 ms per frame on a laptop CPU and 4.2 ms on the Deck (the
+  emulation itself 2.3 ms there), well inside a 60 Hz frame
 
 Not yet verified: a full play-through to the ending by a person, the name entry for a
 top score, and two-player games beyond starting one. In the remastered graphics: the
 flagpole, Bowser's bridge and the ending, vines and springboards, and the cloud lifts of
 the coin heavens (their sprites are mapped by the same tables, but no scripted run
-reached them), and the Steam Deck itself (its build passes the self-tests in the
-container).
+reached them), and a real window on the Deck in Game Mode.
 
 ## Legal note
 
