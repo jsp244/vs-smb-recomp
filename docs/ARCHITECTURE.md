@@ -27,7 +27,7 @@ runtime/mem.c        CPU bus: PPU/APU registers, controllers, Vs. coin/DIP input
 runtime/cart.c       iNES / NES 2.0 loader, hashes, Vs. System detection
 runtime/romzip.c     MAME's suprmrio.zip as an iNES image (zip directory, inflate, CRC checks)
 runtime/palette.c    NTSC composite palette, the 2C03 and RP2C04 RGB palettes
-runtime/widescreen.c the level beside the picture, from the nametables
+runtime/widescreen.c the level beside the picture, from the nametables, with its objects (CPU sandbox)
 runtime/sys.c        power/reset, frame loop, save states
 runtime/headless.c   command-line harness (tests, scripting, pokes, screenshots, traces, coverage)
 runtime/recomp_rt.h  helpers used by the generated code
@@ -194,6 +194,44 @@ it only by the sprites (0.2% of the pixels in 1-1). The frontend shows the part 
 with the overscan crop), or with Integer scaling in fullscreen every column the
 screen holds at the multiple.
 
+**Hooks and the CPU sandbox.** `recomp/symbols.txt` marks two instructions
+`hook`: GameEngine's first ($ADAB, the frame's object code) and InitializeArea's
+($965C). The generated code calls `HOOK(addr)` there and the interpreter checks
+`sys.hook_pc[]` before each instruction, so either path reports them; the hook
+(`engine_hook`) only copies RAM, work RAM and the CPU registers, and cosimulation
+is unaffected. `cpu_sandbox_run` (cpu.c) runs game code from such a copy with the
+interpreter on private RAM and work RAM: `sys.sandbox` makes `cpu_step` skip
+`sys_sync` (no PPU or APU time passes), drops every hardware write (the enemy
+loader writes the Vs. CHR bank to $4016), and ends the run at any hardware read
+except the PPU data port, which reads CHR ROM through a latch and CHR bank of the
+sandbox's own (mem.c) because VS. Super Mario Bros. loads its level data out of
+CHR ROM through $2006/$2007 when an area starts.
+
+**Objects beside the picture.** The engine copy whose sprites the PPU shows is
+the previous frame's (GameEngine runs after the sprite-0 split and its OAM is
+DMA'd at the next NMI). It runs again from GameEngine to $AE14 (past the last
+sprite update, before the area parser) with ScreenLeft/ScreenRight ($071A-$071D)
+moved 112 pixels towards a band; the sprites that differ from the PPU's OAM are
+the ones the camera placed, minus any that wrapped round the moved screen's 8-bit
+X (the player, whom the game never hides at the sides). They are drawn into the
+band and into the 8-pixel columns at the picture's edges where the PPU's frame
+shows background, with sprite priority and behind-background rules. With the
+camera left where it was, the repeat builds the PPU's OAM byte for byte
+(`nes-headless --ws-oam-check`: 62,688 frames over the 40 level runs, no
+difference); a repeat costs 0.01-0.03 ms.
+
+**The page before a part-way start.** InitializeArea takes its start page from
+the halfway page or a pipe's entrance page and sets the parser up to render 12
+column sets from there, so after a mid-area start the nametable columns left of
+the screen hold the previous screen's leftovers. `make_fill` runs the area-start
+copy of InitializeArea in the sandbox to its `STA ScreenLeft_PageLoc` ($9681),
+puts the start page minus one in A, finishes it, then calls AreaParserTaskHandler
+($A18B) 64 times (eight 32-pixel column sets with their attributes), applying the
+nametable writes it queues in VRAM_Buffer2 ($0341, the NMI's format) to a copy of
+the nametables. Band pixels left of the start page come from that copy while the
+area on screen (world, level, area number, type and data offset) is the one it was
+made for.
+
 ## Known inaccuracies
 
 Blargg tests still failing, and why they do not matter for this game:
@@ -283,8 +321,9 @@ vignette; then the target is drawn to the window either 1:1, scaled, or as a
 
 ## Where to take it next
 
-* Objects in the widescreen bands: SMB spawns enemies at the screen's edge, so
-  they appear at the old edge; drawing them earlier would mean running the
-  game's spawn and sprite code for a wider screen.
+* Enemies in Integer views wider than 16:9 still appear inside the band, 48 pixels
+  past the old edge, where the game creates them; spawning them earlier would change
+  the game itself. Hammer Bros and Piranha Plants are erased 16 pixels into the left
+  band, as the game erases them.
 * Keeping the top score between sessions (the board keeps it only while powered).
 * A 2P start button on the phone edition's on-screen controller.

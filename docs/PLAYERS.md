@@ -27,7 +27,8 @@ Graphics      Display mode (windowed / fullscreen / fullscreen exclusive),
               distorts; with a widescreen aspect in fullscreen, Integer fills the
               screen with more of the level on each side), aspect ratio (square
               pixels 8:7 / 4:3 CRT / 16:9 or 16:10 widescreen: the level goes on
-              beside the picture during play, other screens get black bars,
+              beside the picture during play, with the enemies the game keeps
+              there, also after a death or a pipe; other screens get black bars,
               nothing is stretched),
               colors (Arcade: the cabinet's RGB monitor / NES: the colours the
               console version shows), filter (nearest / linear / sharp),

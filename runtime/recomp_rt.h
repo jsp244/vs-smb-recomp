@@ -20,6 +20,9 @@
 /* leave the routine unconditionally (control transfer the dispatcher must resolve) */
 #define EXIT(next) do { sys_sync(); cpu.pc = (next); return; } while (0)
 
+/* an instruction marked "hook" in recomp/symbols.txt: the runtime may look at the machine before it runs */
+#define HOOK(addr) do { if (sys.hook) sys.hook(addr); } while (0)
+
 #ifdef RECOMP_TRACE
 #define INSN(addr) do { cpu.pc = (addr); sys.instructions++; if (sys.trace_hook) sys.trace_hook(); } while (0)
 #else

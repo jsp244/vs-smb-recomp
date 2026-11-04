@@ -10,6 +10,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 static FILE *trace_file;
 static uint32_t pal[512];
@@ -186,6 +187,10 @@ static void usage(void) {
         "  --png-every N       write FILE with the frame number appended every N frames\n"
         "  --widescreen FILE   write the last frame as a 512x240 PNG with the level beside the picture\n"
         "                      (also every N frames with --png-every); checks the centre against --png\n"
+        "  --ws-oam-check      every frame, repeat the engine run the shown sprites came from (the source\n"
+        "                      of the objects beside the picture) and compare its sprites with the PPU's\n"
+        "  --no-ws-sprites     widescreen PNGs without the objects beside the picture\n"
+        "  --no-ws-fill        ... and without the page drawn before an area entered part-way\n"
         "  --wav FILE          write audio to a 48 kHz WAV\n"
         "  --trace FILE        write a per-instruction trace (interpreter)\n"
         "  --nestest N         nestest mode: start at $C000 and run N instructions\n"
@@ -202,6 +207,8 @@ int main(int argc, char **argv) {
     const char *rom = NULL, *png = NULL, *wav = NULL, *trace = NULL, *cov = NULL, *hash = NULL, *sav = NULL, *input = NULL, *debug_log = NULL, *ram_dump = NULL, *pal_out = NULL, *wide = NULL;
     const char *state_save = NULL, *state_load = NULL;
     int frames = 600, png_every = 0, ram_dump_every = 0, nestest = 0, blargg = 0, recomp = 0, quiet = 0, trace_start = 0, dip = 0;
+    int oam_check = 0, oam_same = 0, oam_differ = 0, oam_none = 0, first_differ = -1;
+    double oam_seconds = 0;
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--rom") && i + 1 < argc) rom = argv[++i];
         else if (!strcmp(argv[i], "--frames") && i + 1 < argc) frames = atoi(argv[++i]);
@@ -210,6 +217,9 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i], "--png") && i + 1 < argc) png = argv[++i];
         else if (!strcmp(argv[i], "--png-every") && i + 1 < argc) png_every = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--widescreen") && i + 1 < argc) wide = argv[++i];
+        else if (!strcmp(argv[i], "--ws-oam-check")) oam_check = 1;
+        else if (!strcmp(argv[i], "--no-ws-sprites")) widescreen_sprites = false;
+        else if (!strcmp(argv[i], "--no-ws-fill")) widescreen_fill = false;
         else if (!strcmp(argv[i], "--dip") && i + 1 < argc) dip = (int)strtol(argv[++i], NULL, 16);
         else if (!strcmp(argv[i], "--poke") && i + 1 < argc) parse_pokes(argv[++i]);
         else if (!strcmp(argv[i], "--palette") && i + 1 < argc) pal_out = argv[++i];
@@ -256,6 +266,7 @@ int main(int argc, char **argv) {
         if (f) fclose(f);
     }
     if (input) load_input_script(input);
+    if (wide || oam_check) widescreen_attach();
 
     if (recomp) {
         if (!recomp_rom_sha1) { fprintf(stderr, "this build has no recompiled code\n"); return 1; }
@@ -312,6 +323,14 @@ int main(int argc, char **argv) {
             if (pokes[k].frame == frame) mem_write(pokes[k].addr, pokes[k].val);
         nes_run_frame();
         if (hash_file) fprintf(hash_file, "%d %016llx\n", frame, (unsigned long long)frame_hash());
+        if (oam_check) {
+            clock_t t0 = clock();
+            int r = widescreen_sprite_check();
+            oam_seconds += (double)(clock() - t0) / CLOCKS_PER_SEC;
+            if (r > 0) oam_same++;
+            else if (r == 0) { oam_differ++; if (first_differ < 0) first_differ = frame; }
+            else oam_none++;
+        }
         if (audio) {
             uint32_t avail = apu_samples_available();
             if (audio_n + avail > audio_cap) avail = audio_cap - audio_n;
@@ -363,20 +382,33 @@ int main(int argc, char **argv) {
 
     if (png) { fb_to_rgb(rgb); png_write_rgb(png, 256, 240, rgb); }
     if (wide) {
-        /* the centre of the canvas must be the normal frame, pixel for pixel */
-        int level = wide_to_rgb(rgb_wide);
+        /* the centre of the canvas must be the normal frame, pixel for pixel, except in the 8-pixel columns
+           at its edges, where the sprite columns the game hides are drawn back */
+        int level = wide_to_rgb(rgb_wide), edge_pixels = 0;
         wide_levels += level; wide_frames++;
         fb_to_rgb(rgb);
-        for (int y = 0; y < 240; y++)
-            if (memcmp(rgb + y * 256 * 3, rgb_wide + ((y + WS_VBAND) * WS_W + WS_BAND) * 3, 256 * 3) != 0) wide_mismatch++;
+        for (int y = 0; y < 240; y++) {
+            const uint8_t *a = rgb + y * 256 * 3, *b = rgb_wide + ((y + WS_VBAND) * WS_W + WS_BAND) * 3;
+            if (memcmp(a + 8 * 3, b + 8 * 3, 240 * 3) != 0) wide_mismatch++;
+            for (int x = 0; x < 256; x += (x == 7 ? 241 : 1))
+                if (memcmp(a + x * 3, b + x * 3, 3) != 0) edge_pixels++;
+        }
         png_write_rgb(wide, WS_W, WS_H, rgb_wide);
         int bp, tp;
         if (widescreen_check(&bp, &tp) == 0) { wide_bad += bp; wide_total += tp; }
-        printf("widescreen: %s, bands %s, centre %s the normal frame (%d of %d frames showed a level)\n", wide,
+        printf("widescreen: %s, bands %s, centre %s the normal frame (%d of %d frames showed a level); %d pixels of hidden sprite columns drawn at its edges\n", wide,
                level ? "show the level" : "black (no level on screen)", wide_mismatch ? "DIFFERS from" : "identical to",
-               wide_levels, wide_frames);
+               wide_levels, wide_frames, edge_pixels);
         printf("widescreen: the centre re-rendered from the nametables differs from the PPU's in %.2f%% of the pixels (sprites)\n",
                wide_total ? 100.0 * wide_bad / wide_total : 0.0);
+    }
+    if (oam_check) {
+        int runs = oam_same + oam_differ;
+        char first[48] = "";
+        if (oam_differ) snprintf(first, sizeof first, " (the first at frame %d)", first_differ);
+        printf("ws-oam-check: %d engine runs repeated with the PPU's sprites exactly, %d with different ones%s, "
+               "%d frames without a run to repeat; %.3f ms per repeat\n",
+               oam_same, oam_differ, first, oam_none, runs ? 1000.0 * oam_seconds / runs : 0.0);
     }
     if (wav) { write_wav(wav, audio, audio_n, 48000); free(audio); }
     if (hash_file) fclose(hash_file);
@@ -419,6 +451,7 @@ int main(int argc, char **argv) {
     free(rgb);
     free(rgb_wide);
     if (wide && wide_mismatch) return 1;
+    if (oam_check && oam_differ) return 1;
     if (blargg) return blargg_result == 0 ? 0 : 1;
     return 0;
 }

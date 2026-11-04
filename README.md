@@ -72,9 +72,28 @@ the start of an area, past what it has rendered, the intermission and the text
 screens) the picture sits between black bars. The pixels keep their 4:3 CRT shape:
 a 16:9 picture shows 341 columns (319 with the overscan crop). With Integer scaling
 in fullscreen the picture fills the whole screen at the largest whole multiple, the
-level beside it (2560x1600 at 7x on a 16:10 laptop panel). Enemies appear where the
-game spawns them, at the old edge of the screen: the bands show the level, not
-objects that do not exist yet.
+level beside it (2560x1600 at 7x on a 16:10 laptop panel).
+
+**Objects in the bands.** The game creates an enemy when it comes within 48 pixels
+of the right edge and erases it 72 pixels past either edge, so the bands hold live
+Goombas, Koopas, Piranha Plants, Lakitu, Bloopers and the rest; but it only builds
+sprites for its own 256-pixel screen. The port draws them anyway with the game's own
+code: when the frame's object code (GameEngine) starts, a hook copies RAM, and that
+copy runs GameEngine again in a CPU sandbox (no hardware access, no time passing)
+with the camera moved 112 pixels towards each band. Every object is processed and
+drawn exactly as in the real frame, only placed on a wider screen, and its sprites go
+into the band with the PPU's priority rules. The 8-pixel sprite columns the game hides
+where an object straddles an edge are drawn back, so objects cross into and out of
+the picture whole. In 16:9 an enemy walks in from the physical edge of the screen
+(the game creates it just beyond a 42-pixel band); in wider Integer views it appears
+inside the band, 48 pixels past the old edge.
+
+**After a death or a pipe.** An area entered part-way (at its halfway point after a
+death, or from a pipe) is drawn by the game from that page on, so the columns left of
+the screen were never rendered. The port draws that page the way the game draws an
+area: InitializeArea, from a copy of RAM made as the area starts, runs again in the
+sandbox told to start a page earlier, and the area parser renders the page into a
+copy of the nametables, which the left band reads.
 
 Note on distribution: a prebuilt executable necessarily embeds the recompiled game
 logic (as the N64 recompilation releases do), while every asset still comes from the
@@ -104,6 +123,11 @@ Verified (headless harness with scripted input and RAM pokes, screenshots inspec
 * widescreen: the bands are the game's own nametable columns (the centre re-rendered the
   same way differs from the PPU's frame only by the sprites, 0.2% of the pixels in 1-1);
   16:9 in a window and Integer filling a 2560x1600 screen checked by screenshots
+* objects in the bands: GameEngine re-run in the sandbox with the camera where it was
+  builds exactly the sprites the PPU shows in all 62,688 frames of play across the 40
+  level runs (`--ws-oam-check`); the picture between the 8-pixel edge columns is
+  unchanged; seams checked at both edges (Goombas, Koopas, Buzzy Beetles, a Blooper,
+  Piranha Plants); the page before a halfway respawn drawn into the left band
 
 Not yet verified: a full play-through to the ending by a person, the name entry for a
 top score, and two-player games beyond starting one.
@@ -142,11 +166,14 @@ build/vssmb            # looks for rom/*.nes or *.zip next to the executable; or
 
 `make recomp` prints how many instructions and routines it found (12,156 instructions
 in 261 routines from static analysis alone: the recursive descent follows the game's
-jump tables, see `recomp/symbols.txt`). `make dist` zips the executable with the
-player notes (`docs/PLAYERS.md`) into `dist/`. A build carries its version (`git
-describe`: the newest `v*` tag, plus the commits after it) and the GitHub repository of
-the checkout (its `origin` remote), which the Updates tab compares and downloads from;
-`make VSSMB_VERSION=v1.2.0 VSSMB_REPO=owner/name` sets them where there is no git.
+jump tables, see `recomp/symbols.txt`). Run it again after updating `recomp/` (the
+generated code carries the hooks `recomp/symbols.txt` marks; without them the
+widescreen bands show the level but not its objects). `make dist` zips the
+executable with the player notes (`docs/PLAYERS.md`) into `dist/`. A build carries its
+version (`git describe`: the newest `v*` tag, plus the commits after it) and the GitHub
+repository of the checkout (its `origin` remote), which the Updates tab compares and
+downloads from; `make VSSMB_VERSION=v1.2.0 VSSMB_REPO=owner/name` sets them where there
+is no git.
 
 ### Linux and Steam Deck packages
 
@@ -293,6 +320,8 @@ make test                          # blargg suites through $6000 status reportin
 make headless-recomp               # harness with the recompiled code linked in
 python tests/cosim.py              # interpreter vs native, a 9,000-frame coin-op session
 python tests/cosim.py --levels     # interpreter vs native in every world (about 3.5 minutes)
+build/nes-headless-recomp --rom rom/*.nes --recomp --frames 9000 --ws-oam-check
+                                   # the re-run engine must build the PPU's sprites exactly
 sh tests/run_ui_bind_test.sh       # menu rebinding and text rows (synthetic events)
 sh tests/run_updater_test.sh       # the updater offline: checksums, packages, every refusal
 build/vssmb rom/*.nes --rewind-test 1200   # whole rewind path: every re-run frame must match
