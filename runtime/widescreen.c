@@ -98,12 +98,21 @@ typedef struct {
 static engine_copy_t copies[4];       /* GameEngine's starts, by frame number */
 static engine_copy_t area_copy;       /* the latest start of an area (InitializeArea's first instruction) */
 static uint32_t copy_gen;
+/* the area's parser went through a castle loop (ExecGameLoopback: four pages back), so the nametable
+   columns before the area's start are its own, from before the loop */
+static int looped, last_parse = -1;
 
 static void engine_hook(uint16_t pc) {
     engine_copy_t *s;
     allstars_hook(pc);   /* the remastered graphics follow the same instructions */
+    if (pc == PARSER_CORE) {
+        int col = ram[RAM_PARSER_PAGE] * 16 + (ram[RAM_PARSER_COLUMN] & 15);
+        if (last_parse >= 0 && col == last_parse + 1 - 64) looped = 1;
+        last_parse = col;
+        return;
+    }
     if (pc == ENGINE_START) s = &copies[ppu.frame & 3];
-    else if (pc == AREA_INIT) s = &area_copy;
+    else if (pc == AREA_INIT) { s = &area_copy; looped = 0; last_parse = -1; }
     else return;
     s->frame = ppu.frame;
     s->gen = ++copy_gen;
@@ -294,7 +303,7 @@ static int fill_on;
 static void frame_area(int level) {
     int left = frame_left = ram[RAM_SCREEN_LEFT_PAGE] * 256 + ram[RAM_SCREEN_LEFT_X];
     if (level && area_copy.valid && fill.gen != area_copy.gen) make_fill();
-    fill_on = widescreen_fill && level && fill.start >= 0 && left >= fill.start;
+    fill_on = widescreen_fill && level && fill.start >= 0 && left >= fill.start && !looped;
     for (int k = 0; fill_on && k < 5; k++)
         if (ram[area_id_addr[k]] != fill.id[k]) fill_on = 0;
     for (int ly = 0; ly < 240; ly++) {
@@ -311,7 +320,10 @@ int widescreen_level_window(int *lo, int *hi) { return level_window(lo, hi); }
 static int level_window(int *lo, int *hi) {
     int left = ram[RAM_SCREEN_LEFT_PAGE] * 256 + ram[RAM_SCREEN_LEFT_X];
     int front = ram[RAM_PARSER_PAGE] * 256 + ram[RAM_PARSER_COLUMN] * 16;
-    int ahead = front - (left + 256);
+    /* the pages wrap: a castle's loop (ExecGameLoopback) takes four off every page number, and the
+       screen's can go below page 0 ($FF) while the parser's is past it */
+    int span = (int16_t)(uint16_t)(front - left);
+    int ahead = span - 256;
     if (ahead < 0 || ahead > 192) return 0;
     /* the playfield's scroll (a line low in the picture, below the status bar) must be that position,
        give or take the frame of scrolling between the picture and the RAM */
@@ -320,9 +332,9 @@ static int level_window(int *lo, int *hi) {
     if (ly < 64) return 0;
     int d = (line_origin_x(ly) - left) & 511;
     if (d > 8 && d < 512 - 8) return 0;
-    *lo = front - 512 + MARGIN - left;
-    if (*lo < -left) *lo = -left;        /* nothing before the start of the area */
-    *hi = front - MARGIN - left;
+    *lo = span - 512 + MARGIN;
+    if (*lo < -left && !looped) *lo = -left;   /* nothing before the start of the area (but a loop's) */
+    *hi = span - MARGIN;
     return 1;
 }
 

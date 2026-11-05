@@ -69,7 +69,10 @@ U by the rule that makes the arcade's V from the arcade's U), the coin, credit,
 PUSH BUTTON, continue and game-over screens use All-Stars' backdrop and font, and the
 cabinet's buttons and the continue timer's box are the arcade's pixels lit and
 outlined in All-Stars' manner. The widescreen views work with it (the objects beside
-the picture and the walk into the left band included).
+the picture and the walk into the left band included). All-Stars also redrew spots of
+its own levels with objects of its own that VS.'s level data does not have (its castles'
+staircases and the edges of their lava pits, some of 2-2's coral); there the picture
+shows the blocks All-Stars' parser makes of VS.'s objects.
 
 **All-Stars' music.** The same ROM brings All-Stars' music, chosen apart from the
 graphics: **Audio > Music: As the graphics / Arcade / All-Stars** (As the graphics, the
@@ -103,7 +106,9 @@ the port draws those columns beside the picture with the scroll, CHR bank and
 palette each line was drawn with: the level simply continues past both edges, with
 no seam, and the status bar keeps its place. Where the game holds no level (before
 the start of an area, past what it has rendered, the intermission and the text
-screens) the picture sits between black bars. The pixels keep their 4:3 CRT shape:
+screens) the picture sits between black bars; after a castle's loop (the wrong path
+sends Mario four pages back) the columns left of the area's start are the level from
+before the loop, and the bands show them. The pixels keep their 4:3 CRT shape:
 a 16:9 picture shows 341 columns (319 with the overscan crop). With Integer scaling
 in fullscreen the picture fills the whole screen at the largest whole multiple, the
 level beside it (2560x1600 at 7x on a 16:10 laptop panel).
@@ -192,7 +197,10 @@ Verified (headless harness with scripted input and RAM pokes, screenshots inspec
   Hammer Bro stages; the title with its banner and the demo scrolling it away, the
   PUSH BUTTON, intermission, game-over and continue screens; 16:9 with the objects
   beside the picture and the walk into the left band; the intermission compared with
-  All-Stars' own (run in a reference emulator); the level ends and the objects All-Stars
+  All-Stars' own (run in a reference emulator), the castles' with Bowser breathing fire
+  in its picture; the night sky's clouds and the floating score numbers as All-Stars
+  draws them; the castle loops of 5-4, 7-4 and 8-4, where the blocks, the background
+  and the bands carry on through the jump back as in All-Stars; the level ends and the objects All-Stars
   draws its own way, each reached with RAM pokes (a start page, star power, an object
   spawned) and compared with All-Stars in the reference emulator: the goal flag, the
   castle's star flag and fireworks, Bowser walking, breathing fire and falling upside
@@ -205,7 +213,8 @@ Verified (headless harness with scripted input and RAM pokes, screenshots inspec
   the bouncing block's place as All-Stars' own code writes them; every level's columns
   checked against VS.'s block buffer by a debug self-check (all 32 levels, with deaths and
   the restarts at the halfway page: no cell different). The emulation is untouched by it: per-frame
-  state hashes are identical with and without it (and with the band walk), and the
+  state hashes are identical with and without it (and with the band walk, and through a
+  castle loop), and the
   frontend self-tests pass with it on. The Linux build draws it pixel for pixel as the
   Windows build does; on the Steam Deck (offscreen, in a scratch folder) the Deck build
   finds the All-Stars ROM next to the dump, passes all its self-tests and draws the
@@ -223,7 +232,7 @@ Verified (headless harness with scripted input and RAM pokes, screenshots inspec
   own code asks for (each call noted in the code); its level is the arcade music's (RMS
   about 1,390 in 1-1); the arcade's sound effects heard with the arcade's music muted;
   with the option off the sound is the same as before bit for bit; with it on the frame
-  hashes are unchanged (six scenes) and the self-tests pass (run-ahead included), on
+  hashes are unchanged (seven scenes) and the self-tests pass (run-ahead included), on
   Windows and in the Linux and Deck builds; the same sound bit for bit on Linux as on
   Windows; the Android APKs build with it
 

@@ -48,6 +48,7 @@
 #include "spc700.h"
 #include "nes.h"
 #include "palette.h"
+#include <limits.h>
 #include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -85,8 +86,10 @@ static struct {
 #define INTER_LIVES      0x039224   /* the lives' digits (JSR) */
 #define SPR_OFFSETS      0x039D70   /* the OAM offsets InitializeArea gives the player and the objects ($0B45-$0B61) */
 #define OAM_BUFFER       0x0800     /* where All-Stars builds its OAM (544 bytes) */
+#define OAM_SIZES        0x05DD7A   /* each sprite's size and X bit 8 ($0C00 + 4n) into the OAM's high table, once a frame ($03:82D4) (JSL) */
 #define MAP16_LO         0x039438   /* low bytes of the four metatile groups' tables (bank $03) */
 #define MAP16_HI         0x03943C
+#define FLOATEY_TILES    0x038B0C   /* the floating points' two tiles per value (its FloateyNumTileData) */
 #define AS_USED_BLOCK    0x03BEC6   /* PlayerHeadCollision: LDY #used block */
 #define AS_BUMP_PLACE    0x03BED1   /* ... LDA #metatile / STA ($06),y: the place of a bouncing block */
 #define AS_VINE_CELL     0x03BA99   /* the vine: LDA #metatile / STA ($06),y, the cells it climbs */
@@ -124,6 +127,11 @@ static struct {
 #define VS_ENEMY_GFX     0xE69B     /* EnemyGraphicsTable */
 #define VS_BB_BOUNDS     0xA3DF     /* BlockBuffLowBounds: per metatile group, the first one stored in the block buffer */
 #define VS_POWERUP_GFX   0xE61B     /* PowerUpGfxTable */
+#define VS_FLOATEY       0x867D     /* FloateyNumTileData */
+#define VS_LOOP_WORLD    0xBF84     /* LoopCmdWorldNumber, then LoopCmdPageNumber */
+#define VS_LOOP_PAGE     0xBF8F
+#define VS_LOOP_OFS      0x6000     /* AreaDataOfsLoopback: ExecGameLoopback ($BFA5) reads it from PRG RAM */
+#define N_LOOPS          11
 #define ENEMY_GFX_LEN    0x102
 #define VS_METATILE_LO   0x8D09     /* MetatileGraphics_Low/High */
 #define VS_AREA_OFS      0xACF5     /* area data: first index of each type; CHR addresses at $ACF9 */
@@ -139,6 +147,9 @@ static struct {
 #define RAM_PAGE         0x0725     /* the parser's page and column */
 #define RAM_COLUMN       0x0726
 #define RAM_BACKLOAD     0x0728
+#define RAM_OBJ_PAGE     0x072A     /* AreaObjectPageLoc, AreaObjectPageSel, AreaDataOffset */
+#define RAM_OBJ_PAGE_SEL 0x072B
+#define RAM_DATA_OFS     0x072C
 #define RAM_BB_COLUMN    0x06A0     /* BlockBufferColumnPos */
 #define RAM_MT_BUFFER    0x06A1     /* MetatileBuffer: the column's 13 metatiles */
 
@@ -647,6 +658,7 @@ static struct {
     bool     resync;           /* VS.'s machine jumped (a state load, rewind, reset): parse again */
     uint16_t bg2_scroll, bg3_scroll;
     int      bg2_pages;        /* how many pages of layer 2 the area setup filled: they repeat */
+    int      bg2_seam;         /* after a castle loop, layer 2's x left of which it shows what it did before (-1: none) */
 } area;
 
 static const uint16_t area_id_addr[5] = { RAM_WORLD, RAM_LEVEL, RAM_AREA_NUM, RAM_AREA_TYPE, 0x074F };
@@ -745,6 +757,7 @@ static void build_area(const uint8_t *r) {
         area.bg2_pages++;
     }
     if (!area.bg2_pages) area.bg2_pages = 1;
+    area.bg2_seam = -1;
     w[0x0154] = 0;
     sb_call(sb, SMB1_NMI, 0, 400000);
     memset(area.parsed, 0, sizeof area.parsed);
@@ -774,6 +787,24 @@ static void keep_vs_column(int world) {
    where it was before that column too */
 static uint8_t snap[SNAP_COLS][0x2000];
 
+/* A castle's loop (VS.'s ExecGameLoopback, $BFA5) sends the parser four pages back, to the loop's place in
+   the area data; the columns parsed before it stay in the nametables (four pages are two nametables) and
+   the level goes on from them. All-Stars' parser takes the same step, as its own loop code ($03:C3F5)
+   does: the object page four back, the page select cleared, and the data offset VS.'s parser now has
+   (r: its RAM), in All-Stars' copy of the data, where row-15 objects take three bytes */
+static void loop_back(uint8_t *w, const uint8_t *r) {
+    uint16_t src = (uint16_t)(r[0xE7] | (r[0xE8] << 8));
+    int ofs = r[RAM_DATA_OFS], extra = 0;
+    for (int i = 0; i + 1 < ofs; i += 2) {
+        uint8_t b = cart.wram[(src + i - 0x6000) & 0x7FF];
+        if (b == 0xFD) break;
+        if ((b & 0x0F) == 0x0F) extra++;
+    }
+    w[RAM_OBJ_PAGE] = (uint8_t)(w[RAM_OBJ_PAGE] - 4);
+    w[RAM_OBJ_PAGE_SEL] = 0;
+    w[RAM_DATA_OFS] = (uint8_t)(ofs + extra);
+}
+
 static void parser_column(void) {
     if (area.resync) return;   /* rebuilt from scratch at the next picture */
     if (area.pending || !area.ready || !same_area()) {
@@ -789,10 +820,19 @@ static void parser_column(void) {
         return;
     }
     int world = ram[RAM_PAGE] * 16 + (ram[RAM_COLUMN] & 15);
-    keep_vs_column(world - 1);
+    bool loop = last_world >= 0 && world == last_world + 1 - 64;
+    keep_vs_column(loop ? last_world : world - 1);
     uint8_t *w = sb->wram;
-    if (last_world >= 0 && world <= last_world) {
-        /* this column again: from All-Stars' state before it, if it is still kept */
+    if (loop) {
+        loop_back(w, ram);
+        /* the camera went four pages back too, layer 2's scroll two of the layer's pages. All-Stars draws
+           the layer in strips just ahead of its scroll ($03:A2BA, $04:9B35: 64 pixels wide and ahead in
+           castles, 32 elsewhere), so what it drew before the loop stays until new strips replace it */
+        int step = w[0xBA] == 3 ? 64 : 32, scroll = (((ram[0x071A] << 8) | ram[0x071C]) >> 1) & ~(step - 1);
+        area.bg2_seam = (scroll + 256 + 2 * step) & 0x7FFF;
+    } else if (last_world >= 0 && world != last_world + 1) {
+        /* this column again, or (run-ahead back across a loop) one before the loop: from All-Stars' state
+           before it, if it is still kept */
         if (snap_col[world % SNAP_COLS] != world) { area.resync = true; return; }
         memcpy(w, snap[world % SNAP_COLS], 0x2000);
     }
@@ -822,11 +862,58 @@ static int vs_call(cpu_t *r, uint8_t *sram, uint8_t *swram, uint16_t pc, int max
     return cpu_sandbox_run(r, VS_RETURN, sram, swram, max) < 0 ? -1 : 0;
 }
 
+/* the replay's columns [col, end): VS.'s parser in its CPU sandbox (r, sram, swram), All-Stars' here, with
+   the state before each of the last ones kept as parser_column keeps it; where it got to, -1 if a parser
+   did not come back */
+static int replay(const cpu_t *r, uint8_t *sram, uint8_t *swram, int col, int end) {
+    uint8_t *w = sb->wram;
+    for (int n = 0; col < end && n < 512; n++, col++) {
+        sram[RAM_PAGE] = (uint8_t)(col >> 4); sram[RAM_COLUMN] = (uint8_t)(col & 15);
+        cpu_t c = *r;
+        if (vs_call(&c, sram, swram, VS_PARSER_CORE, 100000) != 0) return -1;
+        sram[RAM_BB_COLUMN] = (uint8_t)((sram[RAM_BB_COLUMN] + 1) & 31);
+        int slot = col & 31;
+        memcpy(area.vs[slot], &sram[RAM_MT_BUFFER], 13);
+        if (col >= end - SNAP_COLS) { memcpy(snap[col % SNAP_COLS], w, 0x2000); snap_col[col % SNAP_COLS] = col; }
+        w[RAM_PAGE] = (uint8_t)(col >> 4); w[RAM_COLUMN] = (uint8_t)(col & 15);
+        w[RAM_BB_COLUMN] = (uint8_t)((sram[RAM_BB_COLUMN] - 1) & 31);
+        if (sb_call(sb, PARSER_CORE, 1, 200000) < 0) return -1;
+        memcpy(area.smas[slot], &w[RAM_MT_BUFFER], 13);
+        area.world_col[slot] = col;
+        area.parsed[slot] = 1;
+    }
+    return col;
+}
+
+/* the same with the castle loop y on the way (at its page, VS.'s ExecGameLoopback in both parsers) */
+static int replay_loop(const cpu_t *r, uint8_t *sram, uint8_t *swram, int col, int end, int y) {
+    int at = cart.prg[VS_LOOP_PAGE - 0x8000 + y] * 16;
+    if (replay(r, sram, swram, col, at) != at) return -1;
+    sram[RAM_OBJ_PAGE] = (uint8_t)(sram[RAM_OBJ_PAGE] - 4);
+    sram[RAM_OBJ_PAGE_SEL] = 0;
+    sram[RAM_DATA_OFS] = swram[VS_LOOP_OFS - 0x6000 + y];
+    loop_back(sb->wram, sram);
+    return replay(r, sram, swram, at - 64, end);
+}
+
+/* the replayed columns' cells that VS.'s block buffer has otherwise (columns not replayed count as empty) */
+static int replay_misses(void) {
+    int bad = 0;
+    for (int col = 0; col < 32; col++)
+        for (int row = 0; row < 13; row++) {
+            uint8_t v = area.parsed[col] ? area.vs[col][row] : 0;
+            uint8_t expect = v >= cart.prg[VS_BB_BOUNDS - 0x8000 + (v >> 6)] ? v : 0;
+            bad += ram[((col & 16) ? 0x05D0 : 0x0500) + row * 16 + (col & 15)] != expect;
+        }
+    return bad;
+}
+
 /* After a jump of VS.'s machine the columns no longer match its nametables, and All-Stars' parser
    carries state from column to column: both parsers run again, VS.'s in its CPU sandbox and All-Stars'
    here, from the area's start up to the column VS.'s parser renders next, as the game itself did. */
 static void resync(void) {
-    static uint8_t sram[2048], swram[2048];
+    static uint8_t sram[2048], swram[2048], sram0[2048], swram0[2048];
+    static sbx_t *sb0;
     area.resync = false;
     area.ready = false;
     memset(area.parsed, 0, sizeof area.parsed);
@@ -854,23 +941,32 @@ static void resync(void) {
     build_area(ram);   /* from VS.'s RAM: the area ids, its data pointer and header */
     if (!area.ready) return;
     int col = sram[RAM_PAGE] * 16 + (sram[RAM_COLUMN] & 15);
-    for (int n = 0; col < target && n < 512; n++, col++) {
-        sram[RAM_PAGE] = (uint8_t)(col >> 4); sram[RAM_COLUMN] = (uint8_t)(col & 15);
-        cpu_t c = r;
-        if (vs_call(&c, sram, swram, VS_PARSER_CORE, 100000) != 0) return;
-        sram[RAM_BB_COLUMN] = (uint8_t)((sram[RAM_BB_COLUMN] + 1) & 31);
-        int slot = col & 31;
-        memcpy(area.vs[slot], &sram[RAM_MT_BUFFER], 13);
-        uint8_t *w = sb->wram;
-        w[RAM_PAGE] = (uint8_t)(col >> 4); w[RAM_COLUMN] = (uint8_t)(col & 15);
-        w[RAM_BB_COLUMN] = (uint8_t)((sram[RAM_BB_COLUMN] - 1) & 31);
-        if (sb_call(sb, PARSER_CORE, 1, 200000) < 0) return;
-        memcpy(area.smas[slot], &w[RAM_MT_BUFFER], 13);
-        area.world_col[slot] = col;
-        area.parsed[slot] = 1;
+    /* less than two pages past a castle loop's new page, the nametables still hold columns from before
+       the loop: the replay goes through that loop if its columns then match VS.'s block buffer better */
+    int best = -1, misses = 0;
+    bool tried = false;
+    for (int y = 0; y < N_LOOPS; y++) {
+        int at = cart.prg[VS_LOOP_PAGE - 0x8000 + y] * 16;
+        if (cart.prg[VS_LOOP_WORLD - 0x8000 + y] != ram[RAM_WORLD] || at <= col || target < at - 64 || target >= at - 32) continue;
+        if (!sb0 && !(sb0 = malloc(sizeof *sb0))) break;
+        if (!tried) {   /* first the replay without a loop */
+            memcpy(sram0, sram, sizeof sram); memcpy(swram0, swram, sizeof swram); memcpy(sb0, sb, sizeof *sb);
+            misses = replay(&r, sram, swram, col, target) == target ? replay_misses() : INT_MAX;
+            tried = true;
+        }
+        memcpy(sram, sram0, sizeof sram); memcpy(swram, swram0, sizeof swram); memcpy(sb, sb0, sizeof *sb);
+        memset(area.parsed, 0, sizeof area.parsed);
+        int m = replay_loop(&r, sram, swram, col, target, y) == target ? replay_misses() : INT_MAX;
+        if (m < misses) { misses = m; best = y; }
+    }
+    if (tried) {
+        memcpy(sram, sram0, sizeof sram); memcpy(swram, swram0, sizeof swram); memcpy(sb, sb0, sizeof *sb);
+        memset(area.parsed, 0, sizeof area.parsed);
     }
     for (int i = 0; i < SNAP_COLS; i++) snap_col[i] = -1;
-    last_world = col - 1;
+    int end = best >= 0 ? replay_loop(&r, sram, swram, col, target, best) : replay(&r, sram, swram, col, target);
+    if (end < 0) return;
+    last_world = end - 1;
 }
 
 void allstars_hook(uint16_t pc) {
@@ -1262,26 +1358,30 @@ static void write_bg1(void) {
 }
 
 /* layer 2: its pages ($7E2000 + page * $800, 32x32 tiles each) into the 64-column tilemap at $0800
-   around the scroll, so the bands beside the picture see the hills too */
-static void write_bg2(int scroll, int x0, int w) {
+   around the scroll, so the bands beside the picture see the hills too; left of a castle loop's seam
+   (area.bg2_seam, for this scroll), what All-Stars drew there before the loop: the layer 512 pixels on */
+static void write_bg2_rows(int scroll, int x0, int w, int r0, int r1, int seam) {
     uint8_t *v = sb->ppu.vram;
     const uint8_t *ram_map = &sb->wram[0x2000];
     int first = (scroll + x0) >> 3, last = (scroll + x0 + w + 7) >> 3;
     for (int tx = first; tx <= last && tx < first + 64; tx++) {
-        int page = ((tx >> 5) % area.bg2_pages + area.bg2_pages) % area.bg2_pages, c = tx & 31;
+        int sx = seam >= 0 && ((tx * 8 - seam) & 0x7FFF) >= 0x8000 - 1024 ? tx + 64 : tx;
+        int page = ((sx >> 5) % area.bg2_pages + area.bg2_pages) % area.bg2_pages, c = sx & 31;
         int dst_col = tx & 63;
-        for (int r = 0; r < 32; r++) {
+        for (int r = r0; r < r1; r++) {
             const uint8_t *src = ram_map + page * 0x800 + r * 0x40 + c * 2;
             uint32_t a = ((uint32_t)(0x0800 + (dst_col >> 5) * 0x400 + r * 32 + (dst_col & 31)) & 0x7FFF) * 2;
             v[a] = src[0]; v[a + 1] = src[1];
         }
     }
 }
+static void write_bg2(int scroll, int x0, int w) { write_bg2_rows(scroll, x0, w, 0, 32, area.bg2_seam); }
 
 /* layer 3's clouds: All-Stars keeps them as 16x16 tiles at $7F3000 (pages of 16 x 14, $E0 bytes, 12
    pages) and the tilemap words of each at BG3_MAP16; rows 0-3 of the tilemap are the status bar. Only
-   areas above ground have them ($04:8B63); under water the layer has the surface's waves in its row 4,
-   written with the level's columns ($04:8C28), elsewhere nothing */
+   areas above ground have them ($04:8B63), and not at night (there layer 2 is split instead); under
+   water the layer has the surface's waves in its row 4, written with the level's columns ($04:8C28),
+   elsewhere nothing */
 static void write_bg3_plain(int water) {
     uint8_t *v = sb->ppu.vram;
     static const uint8_t wave[4] = { 0x2E, 0x2F, 0x2C, 0x2D };
@@ -1770,12 +1870,36 @@ static void build_sprites(snesppu_t *p, const uint8_t *r, int ahead, int screen,
         if (owner[i] == OWN_OTHER)
             for (int j = 0; j < 64; j++)
                 if ((owner[j] == OWN_ENEMY || owner[j] == OWN_PLAYER) && !memcmp(&oam[i * 4], &oam[j * 4], 4)) { stale[i] = 1; break; }
+    /* the points that float up (FloateyNumbersRoutine, $86E1): two sprites side by side with the tiles of
+       FloateyNumTileData ($867D) for a slot's FloateyNum_Control ($0110), in the scored object's sprites or
+       a block object's. All-Stars draws them from its own table ($03:8B0C) in palette 1 at priority 3, the
+       "000" of 1000-8000 one 16x16 sprite of its second table ($03:8BD5) */
+    int8_t floatey[64];
+    memset(floatey, -1, sizeof floatey);
+    for (int f = 0; f < 7 && r && !screen; f++) {
+        uint8_t c = r[0x0110 + f];
+        if (!c || c > 0x0B) continue;
+        uint8_t lt = cart.prg[VS_FLOATEY - 0x8000 + c * 2], rt = cart.prg[VS_FLOATEY + 1 - 0x8000 + c * 2];
+        for (int i = 0; i + 1 < 64; i++) {
+            const uint8_t *a = &oam[i * 4], *b = &oam[(i + 1) * 4];
+            if (a[1] == lt && b[1] == rt && a[0] == b[0] && (uint8_t)(a[3] + 8) == b[3] && floatey[i] < 0) {
+                floatey[i] = (int8_t)(c * 2); floatey[i + 1] = (int8_t)(c * 2 + 1);
+            }
+        }
+    }
     int bowser_done = 0, vine_done = 0;
     for (int i = 0; i < 64; i++) {
         const uint8_t *o = &oam[i * 4];
         if (stale[i] || !sprite_shown(oam, i, dx, real)) continue;
         if (p->nspr + 12 > (int)(sizeof p->spr / sizeof p->spr[0])) break;
         uint8_t nattr = o[2], tile = o[1];
+        if (floatey[i] >= 0) {
+            int k = floatey[i], c = k >> 1;
+            uint16_t t = rom8(FLOATEY_TILES + (uint32_t)k);
+            if ((k & 1) && t == 0x0E) t = 0x10E;
+            add_sprite(p, o[3] + dx, o[0] + 1, t, (k & 1) && c >= 6 && c != 0x0B, 0, 0, 3, 1);
+            continue;
+        }
         if (owner[i] == OWN_ENEMY && r && !screen) {
             int e = owner_slot[i] & 15, ox, oy, kind = special_kind(r, e, owner_slot[i] >> 4, tile, &ox, &oy);
             if (kind == SP_BOWSER) {
@@ -1919,6 +2043,7 @@ static void build_intermission(void) {
     s->cpu.a = 1;
     sb_call(s, WRITE_TEXT, 1, 200000);
     sb_call(s, INTER_LIVES, 1, 200000);
+    sb_call(s, OAM_SIZES, 0, 100000);   /* the picture's 16x16 sprites (Bowser) */
     w[0x0154] = 0;
     sb_call(s, SMB1_NMI, 0, 400000);
     inter.ok = true;
@@ -2326,10 +2451,24 @@ int allstars_render(uint32_t *out, int stride, int x, int y, int w, int h) {
     area.bg2_scroll = (uint16_t)(cam >> 1);
     int type = ram[RAM_AREA_TYPE] & 3;
     area.bg3_scroll = (uint16_t)(type == 1 ? cam >> 2 : cam);   /* the clouds far behind; the waves with the level */
+    /* All-Stars' IRQ ($03:850D) at its line $0EF2: by day it scrolls layer 3 below the status bar; at
+       night ($0ED1, $04:95CE: line $AF) layer 2 is split there instead: its NMI gives the layer the
+       clouds' scroll ($0EEE, $03:84AD), the IRQ the hills' below ($0EFD), and layer 3 has no clouds */
+    uint8_t irq_line = sb->wram[0x0EF2];
+    bool irq = sb->wram[0x0EDE] != 0, starry = sb->wram[0x0ED1] != 0;
     write_bg1();
-    write_bg2(area.bg2_scroll, x, w);
-    if (type == 1) write_bg3_clouds(area.bg3_scroll, x, w);
-    else write_bg3_plain(type == 0);
+    if (starry) {
+        int split = (irq_line + 1 + sb->ppu.vofs[1]) >> 3;   /* the first tile row below the split */
+        if (split < 0) split = 0;
+        if (split > 32) split = 32;
+        write_bg2_rows(area.bg3_scroll, x, w, 0, split, -1);
+        write_bg2_rows(area.bg2_scroll, x, w, split, 32, area.bg2_seam);
+        write_bg3_plain(0);
+    } else {
+        write_bg2(area.bg2_scroll, x, w);
+        if (type == 1) write_bg3_clouds(area.bg3_scroll, x, w);
+        else write_bg3_plain(type == 0);
+    }
     static snesppu_t p;
     p = sb->ppu;
     p.inidisp = 0x0F;   /* All-Stars fades its screens in and out; VS. cuts, so the picture is always at full brightness */
@@ -2355,8 +2494,6 @@ int allstars_render(uint32_t *out, int stride, int x, int y, int w, int h) {
         build_sprites(&p, shown, ahead, 0, band, dx, ppu.oam);
         memcpy(lists[side * 2], p.spr, sizeof(snes_sprite_t) * (size_t)p.nspr); counts[side * 2] = p.nspr;
     }
-    uint8_t irq_line = sb->wram[0x0EF2];
-    bool irq = sb->wram[0x0EDE] != 0, starry = sb->wram[0x0ED1] != 0;
     /* each part replays the frame's registers from its first line */
     static uint8_t regs[offsetof(snesppu_t, spr) - offsetof(snesppu_t, inidisp)];
     static uint16_t cgram[256];
@@ -2381,8 +2518,8 @@ int allstars_render(uint32_t *out, int stride, int x, int y, int w, int h) {
             int sx = ((nt << 8) | ((lv & 0x1F) << 3) | fine) & 0x1FF;
             p.hofs[0] = (uint16_t)sx;
             p.vofs[0] = 0;
-            p.hofs[1] = starry ? 0 : area.bg2_scroll;
-            p.hofs[2] = (irq && line > irq_line) ? (starry ? 0 : area.bg3_scroll) : 0;
+            p.hofs[1] = starry && !(irq && line > irq_line) ? area.bg3_scroll : area.bg2_scroll;
+            p.hofs[2] = (irq && line > irq_line && !starry) ? area.bg3_scroll : 0;
             if (line < y) continue;
             uint32_t *row = out + (size_t)(line - y) * (size_t)stride;
             snesppu_line(&p, line, x0, x1 - x0, row + (x0 - x));

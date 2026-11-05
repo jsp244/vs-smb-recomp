@@ -190,7 +190,10 @@ background starts (v and fine x after the previous line's horizontal copy, and
 scroll: the status bar's lines show the blank tiles beside it, the playfield the
 level. The parser's frontier (`$0725`/`$0726`) and the screen's left edge
 (`$071A`/`$071C`) bound what is valid (16 pixels kept off the column being
-rendered and the oldest one; nothing before the start of the area), and a frame
+rendered and the oldest one; nothing before the start of the area, unless the area's
+parser went through a castle loop, which takes four pages off every page number: the
+columns before the start are then the level's from before the loop, and the page
+arithmetic wraps, the screen's page going to $FF while the parser's is past 0), and a frame
 whose playfield scroll does not agree with the screen position is not a level
 (intermission, text screens), so its bands are black. Objects do not exist beyond
 the screen until the game spawns them at its edge, so the bands are background
@@ -312,7 +315,18 @@ type, the header) rather than from InitializeArea's AreaPointer, which the title
 leaves pointing at another area, and starts on the page VS.'s parser began the area on
 (seen at its first column: the halfway page after a death is cleared later), so that it
 gives VS.'s own metatiles for every column; a debug self-check found the replayed columns
-equal to VS.'s block buffer in all 32 levels, deaths and restarts included.
+equal to VS.'s block buffer in all 32 levels, deaths and restarts included. A castle's
+loop (VS.'s ExecGameLoopback at $BFA5, when Mario takes the wrong path) sends the parser
+four pages back to the loop's place in the area data, and the columns parsed before it
+stay in the nametables (four pages are two nametables): All-Stars' parser takes the same
+step, as its own loop code ($03:C3F5) does (the object page four back, the page select
+cleared, VS.'s new data offset in All-Stars' copy of the data), and the columns go on
+from there. A replay less than two pages past a loop's new page goes through that loop
+too (at its page, VS.'s loop table: $BF84, $BF8F, the offsets in PRG RAM at $6000) if
+its columns then match VS.'s block buffer better than without it. All-Stars also
+redrew spots of its own levels with row-15 objects the NES format has no form for (its
+castles' staircases and pit edges, some of 2-2's coral); VS.'s data has none, so those
+spots are the blocks All-Stars' parser makes of VS.'s objects.
 
 **A frame.** Layer 1 is the parsed columns as All-Stars' map16 words, with the blocks
 VS. changes during play (its block buffer) put in as All-Stars' own code writes them:
@@ -321,7 +335,13 @@ the place of a bouncing block ($27) and the used block ($FC) from its PlayerHead
 otherwise by the pairs the two parsers produced; layer 2 is All-Stars' hills from its
 RAM pages at half the camera's speed; layer 3 its clouds at a quarter above ground (under
 water the surface's waves, elsewhere nothing), below the status bar's IRQ split, and
-above it the status bar from VS.'s nametable in All-Stars' font. The sky's gradient is the sandbox's HDMA, replayed line by line; the
+above it the status bar from VS.'s nametable in All-Stars' font. At night ($0ED1) the
+split is layer 2's instead, as All-Stars' NMI and IRQ ($03:84A8, $03:851A) have it: the
+clouds' scroll above the line, the hills' below, and layer 3 is blank. After a castle's
+loop the camera is four pages back and layer 2's scroll two of the layer's pages; All-Stars
+draws that layer in strips just ahead of its scroll ($03:A2BA, $04:9B35), so what it drew
+before the loop stays until new strips replace it, and the port draws layer 2 the same
+way, from before the loop left of the seam the strips reached. The sky's gradient is the sandbox's HDMA, replayed line by line; the
 animated tiles (? blocks, coins, bushes, water, lava) are All-Stars' frames at VS.'s
 frame counter. Sprites come from VS.'s OAM, attributed to their owners by VS.'s
 sprite-data offsets (the copy of RAM the engine built them from, with one shuffler
@@ -337,7 +357,8 @@ The objects All-Stars draws with routines of its own instead of its table are dr
 as those routines do, placed from any of the object's arcade sprites: the goal flag,
 the castle's star flag, Bowser (one figure for both halves), his flame and its sparks,
 Bullet Bills, Podoboos, shells still and kicked, the vine, the coin heavens' cloud
-lift and fireworks. At a castle's end All-Stars' own retainer code runs in a copy of
+lift and fireworks; the floating score numbers are All-Stars' two tiles for each value
+($03:8B0C: an 8x8 digit and a 16x16 half for 1,000 and up, in front of everything). At a castle's end All-Stars' own retainer code runs in a copy of
 the area's sandbox once a frame (Toad tied up in a sack that wobbles, then its scene
 for each world), with VS.'s Toad, camera and frame counter, and its sprites are drawn;
 the princess stands as All-Stars draws her. VictoryMode runs no GameEngine, so there
@@ -349,8 +370,9 @@ engine re-run as the arcade bands), and beyond the level the game holds the canv
 is black, as with the arcade graphics.
 
 **Screens.** A second sandbox draws the rest. The intermission is All-Stars' own: its
-player head and world-picture objects, its world picture, its text and lives, then its
-NMI. The title's banner is All-Stars' (its DrawTitleScreen's stripes, uploaded by its
+player head and world-picture objects, its world picture, its text and lives, the
+routine that packs each sprite's size into the OAM's high table ($05:DD7A, which its
+frame code calls; Bowser in the castles' picture is 16x16 sprites), then its NMI. The title's banner is All-Stars' (its DrawTitleScreen's stripes, uploaded by its
 NMI) a row higher, its SUPER six columns right, and "VS." in front: All-Stars' S, the
 dot of BROS. with a stroke's shadow under it, and a V. All-Stars has no V; the arcade's
 V is its U with a narrowed lower half, so the port does the same to All-Stars' U: each
