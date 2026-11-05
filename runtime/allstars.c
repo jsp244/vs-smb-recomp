@@ -93,6 +93,7 @@ static struct {
 #define AS_USED_BLOCK    0x03BEC6   /* PlayerHeadCollision: LDY #used block */
 #define AS_BUMP_PLACE    0x03BED1   /* ... LDA #metatile / STA ($06),y: the place of a bouncing block */
 #define AS_VINE_CELL     0x03BA99   /* the vine: LDA #metatile / STA ($06),y, the cells it climbs */
+#define LEVEL_AREA_PTR   0x04C01F   /* LoadAreaPointer's lookup: the level's first area pointer in A, by world and area number (JSL) */
 #define AREA_TYPE_OFS    0x04C190   /* first area index of each area type */
 #define AREA_PTR_LO      0x04C194   /* area data pointers by area index (bank $04) */
 #define AREA_PTR_HI      0x04C1B6
@@ -152,6 +153,8 @@ static struct {
 #define RAM_DATA_OFS     0x072C
 #define RAM_BB_COLUMN    0x06A0     /* BlockBufferColumnPos */
 #define RAM_MT_BUFFER    0x06A1     /* MetatileBuffer: the column's 13 metatiles */
+#define RAM_AS_TYPE      0x005C     /* All-Stars': the area's type, and the style its graphics take (3 a castle's) */
+#define RAM_AS_STYLE     0x00BA
 
 static uint8_t rom8(uint32_t a) {
     uint32_t off = ((a >> 16) & 0x7F) * 0x8000u + (a & 0x7FFF);
@@ -645,6 +648,266 @@ static void map_metatiles(void) {
         if (rom8(play[i].at) == play[i].opcode) mt_static[play[i].vs] = rom8(play[i].at + 1);
 }
 
+/* ---- the decorations of All-Stars' own levels ----
+   All-Stars' own Super Mario Bros. levels carry objects the NES format has no form for (row 15, three bytes, its own
+   kinds, dispatched from $04:8E43): its castles' first staircase drawn as steps ($32), the ends of a floor at a gap
+   ($36, $38), the steps between floors of two heights ($3A, $3C), caps on the wall's brick halves where the wall
+   stops ($34), coral on the water levels' terrain ($3E), a tree crown that a block left standing erased ($12); and
+   over the floors 5-4 and 7-4 leave hanging in mid-air it lays ordinary rows and columns of solid blocks. VS.'s
+   data has none of them; but All-Stars put them wherever the shape of a level asks for them (in its six castles every
+   floor end at a gap has its end tiles but one), so the port finds those places in the columns All-Stars' parser
+   makes of VS.'s data and writes there what those objects would. Each rule reads the plain columns around a column
+   (up to three either side) and was checked against All-Stars' own levels: on VS.'s levels that are SMB's they give
+   All-Stars' own tiles but in a few cells, its own slips (the last step of 8-4, an end a column off over lava). Its
+   hand-placed wall in 8-4's water ($28) is a collision change, not a decoration, and is left out. A cell never changes
+   between solid and empty. */
+
+/* the metatiles those objects write (their handlers' LDA #, and the CMP # they test), read from the handlers */
+enum { D_STEP_END, D_STEP_END2, D_STEP_TOP, D_STEP_FILL, D_CAP, D_HALF_A, D_HALF_B,
+       D_REND_TOP, D_REND_STOP, D_REND, D_BASE, D_LEND_TOP, D_LEND_STOP, D_LEND,
+       D_DOWN_LO, D_DOWN_LO2, D_FLOOR_TOP, D_DOWN_HI_TOP, D_DOWN_HI, D_DOWN_HI2, D_FLOOR,
+       D_UP_HI_TOP, D_UP_HI, D_UP_HI2, D_UP_LO, D_UP_LO2, D_CORAL, N_DECO };
+static const struct { uint32_t at; uint8_t op; } deco_at[N_DECO] = {
+    { 0x04904D, 0xA9 }, { 0x049058, 0xA9 }, { 0x049065, 0xA9 }, { 0x04906F, 0xA9 },   /* $32 a step's end, top, body */
+    { 0x049084, 0xA9 }, { 0x04908E, 0xC9 }, { 0x049092, 0xC9 },                       /* $34 the cap, the two halves */
+    { 0x0490AA, 0xA9 }, { 0x0490B3, 0xC9 }, { 0x0490B7, 0xA9 },                       /* $36 a floor's right end */
+    { 0x0490CF, 0xC9 }, { 0x0490D3, 0xA9 }, { 0x0490DC, 0xC9 }, { 0x0490E0, 0xA9 },   /* $38 its left end ($FC: a firebar's base) */
+    { 0x0490FA, 0xA9 }, { 0x0490FF, 0xA9 }, { 0x049109, 0xC9 }, { 0x04910D, 0xA9 },   /* $3A a step down; the floor's top */
+    { 0x049111, 0xA9 }, { 0x049116, 0xA9 }, { 0x04911B, 0xA9 },                       /* ... and its body */
+    { 0x049137, 0xA9 }, { 0x04913B, 0xA9 }, { 0x049140, 0xA9 }, { 0x049151, 0xA9 },   /* $3C a step up */
+    { 0x049156, 0xA9 },
+    { 0x049166, 0xA9 },                                                               /* $3E coral */
+};
+#define AS_BB_BOUNDS_CMP 0x03A5B2   /* AreaParserCore: CMP BlockBuffLowBounds,y (what is solid, by group) */
+static uint8_t deco[N_DECO], deco_bound[4];
+static bool deco_ok;
+
+/* the others the rules look at: a castle's solid block (the NES's rows and columns of them) and its bridge; in the
+   water levels the terrain's boulders over the seabed; a ground tree's crowns ($11 a tall tree's over $13, $12 a
+   short one's) and trunk */
+#define MT_BLOCK     0x6A
+#define MT_BRIDGE    0x8D
+#define MT_TERRAIN   0x72
+#define MT_SEABED    0x73
+#define MT_CROWN_TOP 0x11
+#define MT_CROWN     0x12
+#define MT_CROWN_LOW 0x13
+#define MT_TRUNK     0x4E
+
+static void map_decorations(void) {
+    deco_ok = false;
+    for (int i = 0; i < N_DECO; i++) {
+        if (rom8(deco_at[i].at - 1) != deco_at[i].op) return;
+        deco[i] = rom8(deco_at[i].at);
+    }
+    if (rom8(AS_BB_BOUNDS_CMP) != 0xD9) return;
+    uint16_t t = rom16(AS_BB_BOUNDS_CMP + 1);
+    for (int g = 0; g < 4; g++) deco_bound[g] = rom8(0x030000u | (uint32_t)(uint16_t)(t + g));
+    deco_ok = true;
+}
+static bool as_solid(uint8_t m) { return m >= deco_bound[m >> 6]; }
+static bool is_half(uint8_t m) { return m == deco[D_HALF_A] || m == deco[D_HALF_B]; }
+
+/* w[k] (k = -3..3): the plain column k from this one, NULL past the area or not parsed yet; world: this column's
+   number in the area */
+
+/* $32, the staircase at a castle's start (VS.: rows of solid blocks on the floor): a column's symbol at the floor
+   row f is the number of blocks standing there with room above, a pit, or something else */
+#define SYM_PIT   0x40
+#define SYM_OTHER 0x41
+static int stair_symbol(const uint8_t *col, int f, int t) {
+    if (!col) return SYM_OTHER;
+    if (col[f] == deco[D_FLOOR_TOP]) {
+        int k = 0;
+        while (f - k - 1 >= 0 && col[f - k - 1] == MT_BLOCK) k++;
+        return f - k - 1 >= 0 && col[f - k - 1] == 0x00 ? k : SYM_OTHER;
+    }
+    for (int r = t; r <= f; r++) if (col[r]) return SYM_OTHER;
+    return SYM_PIT;
+}
+static void deco_stairs(uint8_t *out, const uint8_t *const *w, int world) {
+    const uint8_t *col = w[0];
+    int t = -1, f = -1;
+    for (int r = 1; r < 13;) {   /* the blocks standing on the floor, free above */
+        if (col[r] == MT_BLOCK && col[r - 1] == 0x00) {
+            int s = r;
+            while (r < 13 && col[r] == MT_BLOCK) r++;
+            if (r < 13 && col[r] == deco[D_FLOOR_TOP]) { t = s; f = r; break; }
+        } else r++;
+    }
+    if (t < 0) return;
+    /* one step lower per column to the right, from a top step two or more high that reaches back two columns (or to
+       the area's start), down to the bare floor or a pit */
+    int h = f - t, sym[5];
+    for (int k = -2; k <= 2; k++) {
+        const uint8_t *x = k < 0 && world + k < 0 ? w[-world] : w[k];   /* before the area's start: its first column */
+        sym[k + 2] = k ? stair_symbol(x, f, t) : h;
+    }
+    int l2 = sym[0], l1 = sym[1], r1 = sym[3], r2 = sym[4];
+    bool top = l1 == h && l2 == h && h >= 2, lower = l1 == h + 1 && (l2 == h + 1 || l2 == h + 2);
+    if (!(top && ((r1 == h && (r2 == h || r2 == h - 1)) || (r1 == h - 1 && (r2 == h - 2 || r2 == SYM_PIT)))) &&
+        !(lower && (r1 == SYM_PIT || (r1 == h - 1 && (h == 1 || r2 == h - 2 || r2 == SYM_PIT)))))
+        return;
+    if (r1 == h) {   /* the step goes on to the right */
+        out[t] = deco[D_STEP_TOP];
+        for (int r = t + 1; r < f; r++) out[r] = deco[D_STEP_FILL];
+    } else {         /* its right end */
+        out[t] = deco[D_STEP_END];
+        if (t + 1 < f) out[t + 1] = deco[D_STEP_END2];
+        for (int r = t + 2; r < f; r++) out[r] = deco[D_STEP_FILL];
+    }
+}
+
+/* $34, the caps: a castle's wall is brick halves ($65 left, $66 right); a half whose partner cell is no half gets a
+   cap, and so do the blocks that carry a firebar (hanging from the wall over its base $FC, or a one-block pedestal
+   on the floor under it or beside the one under it). 8-4's water area has that wall too (in world 8 All-Stars'
+   parser draws the water levels' terrain as its halves), and there also a floor's last column against it */
+static void deco_caps(uint8_t *out, const uint8_t *const *w, int type) {
+    const uint8_t *col = w[0];
+    uint8_t base = deco[D_BASE], ftop = deco[D_FLOOR_TOP];
+    for (int r = 0; r < 13; r++) {
+        uint8_t m = col[r];
+        bool cap = false;
+        if (m == deco[D_HALF_A]) cap = w[1] && !is_half(w[1][r]);
+        else if (m == deco[D_HALF_B]) cap = w[-1] && !is_half(w[-1][r]);
+        else if (type == 3 && m == MT_BLOCK && r >= 1 && r <= 11) {
+            bool beside = (w[-1] && is_half(w[-1][r])) || (w[1] && is_half(w[1][r]));
+            if (is_half(col[r - 1]) && col[r + 1] == base && !beside) cap = true;
+            else if (col[r + 1] == ftop && (col[r - 1] == 0x00 || col[r - 1] == base)) {
+                cap = col[r - 1] == base;
+                for (int d = -1; d <= 1 && !cap; d += 2)
+                    cap = w[d] && w[d][r] == MT_BLOCK && w[d][r + 1] == ftop && w[d][r - 1] == base;
+            }
+        } else if (type == 0 && (m == ftop || m == deco[D_FLOOR])) {
+            for (int d = -1; d <= 1 && !cap; d += 2)
+                cap = w[d] && w[-d] && is_half(w[d][r]) && w[-d][r] != ftop && w[-d][r] != deco[D_FLOOR];
+        }
+        if (cap) out[r] = deco[D_CAP];
+    }
+}
+
+/* $3E, coral: the water levels' terrain above the sea floor (row 11). All-Stars leaves the inside of a level's end
+   wall plain, where its picture never reaches; the widescreen bands do, so the whole wall is coral */
+static void deco_coral(uint8_t *out, const uint8_t *col) {
+    if (col[12] != MT_SEABED || col[11] != MT_TERRAIN) return;
+    for (int r = 0; r < 11; r++) if (col[r] == MT_SEABED) return;
+    for (int r = 0; r < 11; r++) if (col[r] == MT_TERRAIN) out[r] = deco[D_CORAL];
+}
+
+/* the floors VS. leaves in mid-air (its castles' terrain bands in 5-4 and 7-4): All-Stars' own data lays rows and
+   columns of solid blocks over them, so they are the castle's blocks */
+static void deco_masses(uint8_t *out, const uint8_t *col) {
+    for (int r = 0; r < 13;) {
+        if (col[r] != deco[D_FLOOR_TOP]) { r++; continue; }
+        int s = r++;
+        while (r < 13 && col[r] == deco[D_FLOOR]) r++;
+        if (r < 13 && col[r] == 0x00) for (int k = s; k < r; k++) out[k] = MT_BLOCK;
+    }
+}
+
+/* $12: a tree crown no longer on its trunk (a block took the rest of the tree's cells) is erased, from below */
+static void deco_trees(uint8_t *out) {
+    for (int r = 11; r >= 0; r--) {
+        uint8_t m = out[r];
+        bool on;
+        if (m == MT_CROWN || m == MT_CROWN_LOW) on = out[r + 1] == MT_TRUNK;
+        else if (m == MT_CROWN_TOP) on = out[r + 1] == MT_CROWN_LOW;
+        else continue;
+        if (!on) out[r] = 0x00;
+    }
+}
+
+/* $36 $38 $3A $3C, a castle floor's ends and steps. Its top: the run of body, blocks and bases from the bottom up,
+   ended by the top tile; a pillar of blocks no neighbour's floor goes on from counts as a gap. In a column's data
+   order: the steps (the higher column of a step two rows or more also gets its end), then the plain ends; nothing
+   paints over a firebar's base, and no end goes under a block or a step standing on the top (All-Stars has none:
+   the rounded corner would not meet the square one above) */
+static int floor_top(const uint8_t *c) {
+    int r = 13;
+    while (r > 0) {
+        uint8_t m = c[r - 1];
+        if (m == deco[D_FLOOR_TOP]) { r--; break; }
+        if (m == deco[D_FLOOR] || m == MT_BLOCK || m == deco[D_BASE]) { r--; continue; }
+        break;
+    }
+    return r <= 12 ? r : -1;
+}
+static int eff_top(const uint8_t *const *w, int k) {
+    const uint8_t *c = w[k];
+    int t = c ? floor_top(c) : -1;
+    if (t < 0) return -1;
+    for (int r = t; r < 13; r++) if (c[r] == deco[D_FLOOR_TOP] || c[r] == deco[D_FLOOR]) return t;
+    return (w[k - 1] && floor_top(w[k - 1]) == t) || (w[k + 1] && floor_top(w[k + 1]) == t) ? t : -1;
+}
+static bool wall_tile(uint8_t m) { return is_half(m) || m == deco[D_CAP] || m == MT_TERRAIN || m == MT_SEABED; }
+static void put(uint8_t *out, int r, uint8_t m) { if (out[r] != deco[D_BASE]) out[r] = m; }
+static bool covered(const uint8_t *out, int a) {
+    uint8_t m = a ? out[a - 1] : 0x00;
+    return m == MT_BLOCK || m == deco[D_STEP_END] || m == deco[D_STEP_END2] || m == deco[D_STEP_TOP] ||
+           m == deco[D_STEP_FILL];
+}
+static void floor_right_end(uint8_t *out, int a) {
+    if (covered(out, a)) return;
+    put(out, a, deco[D_REND_TOP]);
+    for (int r = a + 1; r < 13 && out[r] != deco[D_REND_STOP]; r++) put(out, r, deco[D_REND]);
+}
+static void floor_left_end(uint8_t *out, int a) {
+    if (covered(out, a)) return;
+    put(out, a, deco[D_LEND_TOP]);
+    for (int r = a + 1; r < 13 && out[r] != deco[D_LEND_STOP]; r++) put(out, r, deco[D_LEND]);
+}
+static void deco_floor(uint8_t *out, const uint8_t *const *w) {
+    int a = eff_top(w, 0);
+    if (a < 0) return;
+    int L = eff_top(w, -1), R = eff_top(w, 1);
+    bool down_in = L >= 0 && L < a && !as_solid(w[0][L]);      /* the lower column of a step down from the left */
+    bool up_in = L > a && !as_solid(w[-1][a]);                 /* the higher column of a step up from the left */
+    bool down_out = R > a && !as_solid(w[1][a]);               /* the higher column of a step down to the right */
+    bool up_out = R >= 0 && R < a && !as_solid(w[0][R]);       /* the lower column of a step up to the right */
+    /* a lone column between gaps keeps its look, but for its end at the bridge (where All-Stars ends every castle's
+       last floor) */
+    bool some = L >= 0 || R >= 0;
+    bool lend = w[-1] && L < 0 && !wall_tile(w[-1][a]) && some && !down_out;
+    bool rend = w[1] && R < 0 && !wall_tile(w[1][a]) && (some || w[1][a] == MT_BRIDGE) && !up_in;
+    if (down_in) {
+        if (!out[a - 1]) put(out, a - 1, deco[D_DOWN_LO]);
+        put(out, a, deco[D_DOWN_LO2]);
+    }
+    if (up_in) {
+        put(out, L - 1, out[L - 1] == deco[D_FLOOR_TOP] ? deco[D_UP_HI_TOP] : deco[D_UP_HI]);
+        put(out, L, deco[D_UP_HI2]);
+        for (int r = L + 1; r < 13; r++) put(out, r, deco[D_FLOOR]);
+        if (L - a >= 2) floor_left_end(out, a);
+    }
+    if (down_out) {
+        put(out, R - 1, out[R - 1] == deco[D_FLOOR_TOP] ? deco[D_DOWN_HI_TOP] : deco[D_DOWN_HI]);
+        put(out, R, deco[D_DOWN_HI2]);
+        put(out, 12, deco[D_FLOOR]);
+        if (R - a >= 2) floor_right_end(out, a);
+    }
+    if (up_out) {
+        if (!out[a - 1]) put(out, a - 1, deco[D_UP_LO]);
+        put(out, a, deco[D_UP_LO2]);
+    }
+    if (lend) floor_left_end(out, a);
+    if (rend) floor_right_end(out, a);
+}
+
+/* a column as All-Stars would draw it in its own level: win = the plain columns from three left of it to three
+   right, type = the area's (0 water, 1 ground, 3 castle) */
+static void decorate(uint8_t out[13], const uint8_t *const win[7], int type, int world) {
+    const uint8_t *const *w = win + 3;
+    memcpy(out, w[0], 13);
+    if (!deco_ok) return;
+    if (type == 3) deco_stairs(out, w, world);
+    if (type == 3) deco_masses(out, w[0]);
+    if (type == 3 || type == 0) deco_caps(out, w, type);
+    if (type == 0) deco_coral(out, w[0]);
+    if (type == 1) deco_trees(out);
+    if (type == 3 || type == 0) deco_floor(out, w);   /* last: the others look at the floor's plain top */
+    for (int r = 0; r < 13; r++) if (as_solid(out[r]) != as_solid(w[0][r])) out[r] = w[0][r];
+}
+
 /* ---- the area being shown ---- */
 static struct {
     bool     pending;          /* InitializeArea ran in VS.: build at its first parsed column */
@@ -652,6 +915,8 @@ static struct {
     uint8_t  vs_ptr, db;
     uint8_t  id[5];            /* world, level, area number, type, data offset when it was built */
     uint8_t  smas[32][13], vs[32][13];   /* per column of the 512-pixel window: the parsers' metatiles */
+    uint8_t  plain[32][13];    /* All-Stars' before the decorations of its own levels (see decorate) */
+    uint8_t  have[32];         /* plain holds a column of this area */
     uint8_t  parsed[32];       /* the column holds this area's metatiles */
     int      world_col[32];    /* which column of the area (page * 16 + column) each holds */
     int      last_col;         /* the column VS. was rendering at the previous parser call */
@@ -705,6 +970,41 @@ static void area_header(const uint8_t *r, uint8_t v[N_HEADER_VARS]) {
     v[8] = r[0x06CC];
 }
 
+/* the inputs of InitializeArea, as VS. had them, for the All-Stars area pointer ptr */
+static void area_inputs(const uint8_t *r, uint8_t ptr) {
+    uint8_t *w = sb->wram;
+    w[RAM_AREA_PTR] = ptr;
+    w[RAM_WORLD] = r[RAM_WORLD]; w[RAM_LEVEL] = r[RAM_LEVEL]; w[RAM_AREA_NUM] = r[RAM_AREA_NUM];
+    w[0x0753] = r[0x0753]; w[0x0756] = r[0x0756];
+    w[0x075B] = r[0x075B]; w[0x0752] = r[0x0752]; w[0x0751] = r[0x0751];
+    int sp = start_page(r);
+    if (sp >= 0) { w[0x075B] = (uint8_t)sp; w[0x0752] = 0; }   /* HalfwayPage, not AltEntranceControl */
+    w[0x076A] = r[0x076A];
+    w[0x0770] = 1; w[0x0772] = 0;
+}
+
+/* All-Stars draws its 8-4 water area in a castle's style ($BA 3, its type water): the setup loads the water's
+   tiles and leaves the rest of VRAM as the castle its pipe comes from had it. So the sandbox sets up the level's
+   first area (LoadAreaPointer's, by world and area number) before such an area and keeps that VRAM */
+static void castle_vram_first(const uint8_t *r) {
+    uint8_t *w = sb->wram, ptr = w[RAM_AREA_PTR];
+    if (w[RAM_AS_STYLE] != 3 || w[RAM_AS_TYPE] == 3) return;
+    sb_call(sb, LEVEL_AREA_PTR, 0, 100000);
+    uint8_t lvl = (uint8_t)sb->cpu.a;
+    if (lvl == ptr) return;
+    area_inputs(r, lvl);
+    sb_call(sb, INIT_AREA, 1, 400000);
+    sb_call(sb, AREA_GRAPHICS, 0, 4000000);
+    w[0x0154] = 0;
+    sb_call(sb, SMB1_NMI, 0, 400000);
+    static uint8_t vram[sizeof sb->ppu.vram];
+    memcpy(vram, sb->ppu.vram, sizeof vram);
+    memcpy(sb, sb_base, sizeof *sb);
+    memcpy(sb->ppu.vram, vram, sizeof vram);
+    area_inputs(r, ptr);
+    sb_call(sb, INIT_AREA, 1, 400000);
+}
+
 static void build_area(const uint8_t *r) {
     area.ready = false;
     if (!sb_base) return;
@@ -716,16 +1016,9 @@ static void build_area(const uint8_t *r) {
     area.db = db;
     area.vs_ptr = r[RAM_AREA_PTR];
     for (int i = 0; i < 5; i++) area.id[i] = r[area_id_addr[i]];
-    /* the inputs of InitializeArea, as VS. had them */
-    w[RAM_AREA_PTR] = (uint8_t)((type << 5) | (db - first));
-    w[RAM_WORLD] = r[RAM_WORLD]; w[RAM_LEVEL] = r[RAM_LEVEL]; w[RAM_AREA_NUM] = r[RAM_AREA_NUM];
-    w[0x0753] = r[0x0753]; w[0x0756] = r[0x0756];
-    w[0x075B] = r[0x075B]; w[0x0752] = r[0x0752]; w[0x0751] = r[0x0751];
-    int sp = start_page(r);
-    if (sp >= 0) { w[0x075B] = (uint8_t)sp; w[0x0752] = 0; }   /* HalfwayPage, not AltEntranceControl */
-    w[0x076A] = r[0x076A];
-    w[0x0770] = 1; w[0x0772] = 0;
+    area_inputs(r, (uint8_t)((type << 5) | (db - first)));
     sb_call(sb, INIT_AREA, 1, 400000);
+    castle_vram_first(r);
     /* the area's header and objects are VS.'s */
     uint8_t hv[N_HEADER_VARS];
     area_header(r, hv);
@@ -761,6 +1054,7 @@ static void build_area(const uint8_t *r) {
     w[0x0154] = 0;
     sb_call(sb, SMB1_NMI, 0, 400000);
     memset(area.parsed, 0, sizeof area.parsed);
+    memset(area.have, 0, sizeof area.have);
     area.ready = true;
     area.pending = false;
 }
@@ -776,7 +1070,7 @@ static void keep_vs_column(int world) {
     if (world < 0 || area.world_col[slot] != world) return;
     memcpy(area.vs[slot], &ram[RAM_MT_BUFFER], 13);
     for (int r = 0; r < 13; r++) {
-        uint8_t v = area.vs[slot][r], s = area.smas[slot][r];
+        uint8_t v = area.vs[slot][r], s = area.plain[slot][r];
         if (!mt_seen_ok[v]) { mt_seen[v] = s; mt_seen_ok[v] = 1; }
     }
     area.parsed[slot] = 1;
@@ -786,6 +1080,26 @@ static void keep_vs_column(int world) {
    other short returns to the past make VS. parse a column again, and All-Stars' parser must then start from
    where it was before that column too */
 static uint8_t snap[SNAP_COLS][0x2000];
+
+
+/* the column in slot s from the plain columns three either side of it (in the nametables' order: across a castle's
+   loop the column after the last one before it is the first after it) */
+static void finish_column(int s) {
+    const uint8_t *win[7];
+    for (int k = -3; k <= 3; k++) {
+        int n = (s + k) & 31;
+        win[k + 3] = area.have[n] && ((area.world_col[n] - area.world_col[s] - k) & 63) == 0 ? area.plain[n] : NULL;
+    }
+    decorate(area.smas[s], win, ram[RAM_AREA_TYPE] & 3, area.world_col[s]);
+}
+
+/* a column parsed (All-Stars' metatiles in w's metatile buffer): kept as it is, and it and the three before it
+   decorated again with what is now known of their right */
+static void column_parsed(int slot, const uint8_t *w) {
+    memcpy(area.plain[slot], &w[RAM_MT_BUFFER], 13);
+    area.have[slot] = 1;
+    for (int k = 3; k >= 0; k--) if (area.have[(slot - k) & 31]) finish_column((slot - k) & 31);
+}
 
 /* A castle's loop (VS.'s ExecGameLoopback, $BFA5) sends the parser four pages back, to the loop's place in
    the area data; the columns parsed before it stay in the nametables (four pages are two nametables) and
@@ -845,7 +1159,7 @@ static void parser_column(void) {
     w[RAM_PAGE] = ram[RAM_PAGE]; w[RAM_COLUMN] = ram[RAM_COLUMN];
     w[RAM_BACKLOAD] = ram[RAM_BACKLOAD]; w[RAM_BB_COLUMN] = ram[RAM_BB_COLUMN];
     if (sb_call(sb, PARSER_CORE, 1, 200000) < 0) return;
-    memcpy(area.smas[slot], &w[RAM_MT_BUFFER], 13);
+    column_parsed(slot, w);
 }
 
 /* ---- hooks ---- */
@@ -878,8 +1192,8 @@ static int replay(const cpu_t *r, uint8_t *sram, uint8_t *swram, int col, int en
         w[RAM_PAGE] = (uint8_t)(col >> 4); w[RAM_COLUMN] = (uint8_t)(col & 15);
         w[RAM_BB_COLUMN] = (uint8_t)((sram[RAM_BB_COLUMN] - 1) & 31);
         if (sb_call(sb, PARSER_CORE, 1, 200000) < 0) return -1;
-        memcpy(area.smas[slot], &w[RAM_MT_BUFFER], 13);
         area.world_col[slot] = col;
+        column_parsed(slot, w);
         area.parsed[slot] = 1;
     }
     return col;
@@ -916,7 +1230,7 @@ static void resync(void) {
     static sbx_t *sb0;
     area.resync = false;
     area.ready = false;
-    memset(area.parsed, 0, sizeof area.parsed);
+    memset(area.parsed, 0, sizeof area.parsed); memset(area.have, 0, sizeof area.have);
     area.last_col = -1;
     int target = ram[RAM_PAGE] * 16 + (ram[RAM_COLUMN] & 15);
     memcpy(sram, ram, sizeof sram);
@@ -955,13 +1269,13 @@ static void resync(void) {
             tried = true;
         }
         memcpy(sram, sram0, sizeof sram); memcpy(swram, swram0, sizeof swram); memcpy(sb, sb0, sizeof *sb);
-        memset(area.parsed, 0, sizeof area.parsed);
+        memset(area.parsed, 0, sizeof area.parsed); memset(area.have, 0, sizeof area.have);
         int m = replay_loop(&r, sram, swram, col, target, y) == target ? replay_misses() : INT_MAX;
         if (m < misses) { misses = m; best = y; }
     }
     if (tried) {
         memcpy(sram, sram0, sizeof sram); memcpy(swram, swram0, sizeof swram); memcpy(sb, sb0, sizeof *sb);
-        memset(area.parsed, 0, sizeof area.parsed);
+        memset(area.parsed, 0, sizeof area.parsed); memset(area.have, 0, sizeof area.have);
     }
     for (int i = 0; i < SNAP_COLS; i++) snap_col[i] = -1;
     int end = best >= 0 ? replay_loop(&r, sram, swram, col, target, best) : replay(&r, sram, swram, col, target);
@@ -986,7 +1300,7 @@ void allstars_attach(void) {
     area.ready = false; area.pending = false; area.last_col = -1; area.resync = true;   /* built at the next picture */
     area_start.ok = false;
     memset(mt_seen_ok, 0, sizeof mt_seen_ok);
-    if (as.rom && cart.prg && cart.chr) { map_areas(); map_metatiles(); map_sprite_palettes(); }
+    if (as.rom && cart.prg && cart.chr) { map_areas(); map_metatiles(); map_decorations(); map_sprite_palettes(); }
 }
 
 /* ---- loading ---- */

@@ -69,10 +69,13 @@ U by the rule that makes the arcade's V from the arcade's U), the coin, credit,
 PUSH BUTTON, continue and game-over screens use All-Stars' backdrop and font, and the
 cabinet's buttons and the continue timer's box are the arcade's pixels lit and
 outlined in All-Stars' manner. The widescreen views work with it (the objects beside
-the picture and the walk into the left band included). All-Stars also redrew spots of
-its own levels with objects of its own that VS.'s level data does not have (its castles'
-staircases and the edges of their lava pits, some of 2-2's coral); there the picture
-shows the blocks All-Stars' parser makes of VS.'s objects.
+the picture and the walk into the left band included). All-Stars also dressed its own
+levels with objects VS.'s level data does not have: its castles' first staircase as
+smooth steps, rounded ends wherever a floor stops at a gap, steps between floors of two
+heights, caps on the wall's bricks where the wall stops, coral on the water levels'
+terrain, stone blocks over the floors its castles leave hanging in mid-air. It put them
+wherever the level's shape asks for them, so the port finds those places in VS.'s levels
+(its own castles too) and draws the same tiles there.
 
 **All-Stars' music.** The same ROM brings All-Stars' music, chosen apart from the
 graphics: **Audio > Music: As the graphics / Arcade / All-Stars** (As the graphics, the
@@ -200,7 +203,14 @@ Verified (headless harness with scripted input and RAM pokes, screenshots inspec
   All-Stars' own (run in a reference emulator), the castles' with Bowser breathing fire
   in its picture; the night sky's clouds and the floating score numbers as All-Stars
   draws them; the castle loops of 5-4, 7-4 and 8-4, where the blocks, the background
-  and the bands carry on through the jump back as in All-Stars; the level ends and the objects All-Stars
+  and the bands carry on through the jump back as in All-Stars; All-Stars' own decorations
+  (staircases, floor ends and steps, wall caps, coral, the crowns erased, the blocks over
+  5-4's and 7-4's hanging floors) on every VS. area, compared cell by cell with All-Stars'
+  own areas parsed by its own parser (in the world each is played in) where the level is
+  SMB's: 1,140 cells as All-Stars draws them and none wrong, the rest of the difference
+  All-Stars' own slips, and no cell changed between solid and empty; 8-4's water area
+  compared with All-Stars' own in the reference emulator (its stone, caps and floor);
+  the level ends and the objects All-Stars
   draws its own way, each reached with RAM pokes (a start page, star power, an object
   spawned) and compared with All-Stars in the reference emulator: the goal flag, the
   castle's star flag and fireworks, Bowser walking, breathing fire and falling upside

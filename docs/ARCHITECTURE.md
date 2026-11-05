@@ -297,7 +297,12 @@ area number, then the longest common subsequence of the object lists. The header
 settings themselves are VS.'s, decoded from the area's two header bytes as its
 GetAreaDataAddrs ($AC0E) does: VS. copies each area's data to PRG RAM ($6200), where the
 header stays while the area runs (objects change the settings in RAM as the parser meets
-them, so a later rebuild cannot take them from there).
+them, so a later rebuild cannot take them from there). One area leans on the one before
+it: All-Stars gives its 8-4 water area a castle's style ($BA 3), and its setup loads the
+water's tiles and leaves the rest of VRAM as the castle the pipe comes from had it (the
+castle's stone, which its wall and floor are drawn with). So before an area of a castle's
+style that is no castle, the sandbox sets up the level's first area (All-Stars'
+LoadAreaPointer lookup, $04:C01F, by world and area number) and keeps its VRAM.
 
 **Columns.** VS.'s AreaParserCore ($A2D7) is a hook too: for every column VS. parses,
 All-Stars' AreaParserCore ($03:A436) parses the same column of VS.'s own level data
@@ -323,10 +328,36 @@ step, as its own loop code ($03:C3F5) does (the object page four back, the page 
 cleared, VS.'s new data offset in All-Stars' copy of the data), and the columns go on
 from there. A replay less than two pages past a loop's new page goes through that loop
 too (at its page, VS.'s loop table: $BF84, $BF8F, the offsets in PRG RAM at $6000) if
-its columns then match VS.'s block buffer better than without it. All-Stars also
-redrew spots of its own levels with row-15 objects the NES format has no form for (its
-castles' staircases and pit edges, some of 2-2's coral); VS.'s data has none, so those
-spots are the blocks All-Stars' parser makes of VS.'s objects.
+its columns then match VS.'s block buffer better than without it.
+
+**All-Stars' own decorations.** All-Stars' own levels carry row-15 objects the NES format
+has no form for (three bytes; its own kinds, dispatched by $04:8E15 from a table at
+$04:8E43, each writing a few metatiles of its own): $32 a castle's first staircase as
+smooth steps, $36/$38 a floor's ends at a gap, $3A/$3C the steps between floors of two
+heights, $34 caps on the wall's brick halves where the wall stops and on the blocks that
+carry a firebar, $3E coral on the water levels' terrain, $12 a tree crown erased that a
+block left standing. VS.'s data has none of them, but All-Stars placed them wherever the
+level's shape asks for them (in its six castles every floor end at a gap has its end
+tiles but one), so the port derives them from the columns themselves: each parsed column
+is kept plain, and once the three after it are parsed it is redrawn from the plain
+columns three either side of it by rules that do what those objects do there, with the
+objects' metatiles read from their handlers. On VS.'s levels that are SMB's, the rules
+give All-Stars' own tiles cell for cell but in a few cells that are All-Stars' own slips
+(the last step of 8-4's castle undecorated, an end a column off over lava); they never
+change a cell between solid and empty (by All-Stars' own bounds, $03:A5C8). The one
+object All-Stars placed by hand for another reason, a wall ($28) closing the corridor
+behind 8-4's exit pipe, is a collision change and is left out (VS.'s data closes it
+already). Where VS.'s levels take shapes All-Stars' have not, the rules keep to what it
+does: no end under a block or a step standing on a floor (the rounded corner would not
+meet the square one above), a lone column between gaps left plain but for its end at the
+bridge, and the end wall of a water level coral right through (All-Stars leaves its
+inside plain where its picture never reaches; the widescreen bands do). In world 8
+All-Stars' parser draws the water levels' terrain as the castle's wall halves, so 8-4's
+water area gets the castle's caps. One look of All-Stars' own comes from ordinary
+objects: over the floors 5-4 and 7-4 leave hanging in mid-air its data lays rows and
+columns of solid blocks, so those floors are drawn as blocks; it is the only change of
+look, not of shape, between its levels and SMB's besides the row-15 objects. The pairs
+the fallback mapping learns come from the plain columns.
 
 **A frame.** Layer 1 is the parsed columns as All-Stars' map16 words, with the blocks
 VS. changes during play (its block buffer) put in as All-Stars' own code writes them:
