@@ -236,6 +236,7 @@ def package(t, libs, dex, res, edition):
         z.write(dex, "classes.dex")
         for arcname, path in libs.items():
             z.write(path, arcname)
+        z.write(os.path.join(ROOT, "docs", "PLAYERS.md"), "assets/README.txt")   # the players' guide and licences, as the other packages carry it
     aligned = os.path.join(BUILD, "aligned.apk")
     run([t["zipalign"], "-p", "-f", "4", unaligned, aligned])
     if not os.path.exists(KEYSTORE):

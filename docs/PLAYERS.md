@@ -139,6 +139,31 @@ known VS. Super Mario Bros. dump (MAME's suprmrio set gives the same image).
 
 Legal
 -----
-VS. Super Mario Bros. is a trademark and copyright of Nintendo. This port is an
-unofficial fan project; it only runs with a dump you provide. Do not share your
-ROM files.
+VS. Super Mario Bros. and Super Mario All-Stars are trademarks and copyrights of
+Nintendo. This port is an unofficial fan project; it only runs with a dump you
+provide. Do not share your ROM files.
+
+The SNES sound unit that plays All-Stars' music is LakeSnes's emulation
+(github.com/angelo-wf/LakeSnes), used under its licence:
+
+    MIT License
+
+    Copyright (c) 2021-2023 angelo_wf and contributors
+
+    Permission is hereby granted, free of charge, to any person obtaining a copy
+    of this software and associated documentation files (the "Software"), to deal
+    in the Software without restriction, including without limitation the rights
+    to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+    copies of the Software, and to permit persons to whom the Software is
+    furnished to do so, subject to the following conditions:
+
+    The above copyright notice and this permission notice shall be included in all
+    copies or substantial portions of the Software.
+
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+    AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+    OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+    SOFTWARE.
