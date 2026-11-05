@@ -363,7 +363,16 @@ the fallback mapping learns come from the plain columns.
 VS. changes during play (its block buffer) put in as All-Stars' own code writes them:
 the place of a bouncing block ($27) and the used block ($FC) from its PlayerHeadCollision
 ($03:BEC6), the vine's cells ($2A, $03:BA99), a coin or brick gone as nothing, and
-otherwise by the pairs the two parsers produced; layer 2 is All-Stars' hills from its
+otherwise by the pairs the two parsers produced. Bowser's bridge VS. takes away in its
+nametable only: after the axe its BridgeCollapse ($CF2F, VictoryMode's first task; VS.'s
+VictoryMode is OperMode 3) blanks the axe, the chain and the 13 pieces, one every 4
+frames, at the addresses of its BridgeCollapseData ($CF20, $22xx), counted by
+BridgeCollapseOffset ($0369), and its block buffer keeps the bridge. So each of those
+cells that VS.'s parser filled with that object is drawn empty from the frame the
+nametable shows it blank, as All-Stars' own collapse ($03:D4D0) writes its blank there,
+and each piece leaves All-Stars' rubble falling for 27 frames ($03:D4A0, drawn by its
+Bowser routine at $05:CA13), aged from the offset, Bowser's feet counter ($0364) and,
+after the last piece, how long he has been falling. Layer 2 is All-Stars' hills from its
 RAM pages at half the camera's speed; layer 3 its clouds at a quarter above ground (under
 water the surface's waves, elsewhere nothing), below the status bar's IRQ split, and
 above it the status bar from VS.'s nametable in All-Stars' font. At night ($0ED1) the
@@ -384,6 +393,10 @@ by comparing the two enemy graphics tables (upside down, VS.'s rows swapped back
 first), and get All-Stars' palette for their type; fireballs, fire bars, explosions,
 jumping coins, hammers, bubbles, lifts and bouncing blocks get the tiles, palettes and
 16x16 sizes All-Stars' own handlers use (the constants are noted at each in the code).
+The lifts that move sideways are in front of all of layer 1: All-Stars draws lifts
+behind its lava (whose tiles have the priority bit) and has 8-4's lava lift a row
+higher than SMB's, while VS.'s runs on the lava's top row; a lift that moves up or down
+(a falling one, the player on it) sinks behind the lava as the player does.
 The objects All-Stars draws with routines of its own instead of its table are drawn
 as those routines do, placed from any of the object's arcade sprites: the goal flag,
 the castle's star flag, Bowser (one figure for both halves), his flame and its sparks,
@@ -395,10 +408,13 @@ for each world), with VS.'s Toad, camera and frame counter, and its sprites are 
 the princess stands as All-Stars draws her. VictoryMode runs no GameEngine, so there
 the owners come from RAM, a shuffler step ahead. `snesppu.c` then draws mode 1 with
 All-Stars' priorities, windows and colour math (layers 2 and 3 on the subscreen,
-added to the backdrop). In the widescreen canvas the frame is drawn in three parts,
-the bands with the sprites the game builds there (`widescreen_band_oam`: the same
-engine re-run as the arcade bands), and beyond the level the game holds the canvas
-is black, as with the arcade graphics.
+added to the backdrop; under water instead the fixed colour's gradient, added to
+layers 1 and 2, the sprites of palettes 4-7 and the backdrop inside window 2: all 256
+columns below the surface). In the widescreen canvas the frame is drawn in three
+parts, the bands with the sprites the game builds there (`widescreen_band_oam`: the
+same engine re-run as the arcade bands) and the windows of the picture's nearest
+column, and beyond the level the game holds the canvas is black, as with the arcade
+graphics.
 
 **Screens.** A second sandbox draws the rest. The intermission is All-Stars' own: its
 player head and world-picture objects, its world picture, its text and lives, the

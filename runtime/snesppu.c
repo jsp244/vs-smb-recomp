@@ -106,7 +106,11 @@ static void obj_line(const snesppu_t *p, int y, int x0, int w, lpix_t *out, uint
     }
 }
 
-/* window masks for one layer (0-3 BGs, 4 OBJ, 5 color): 1 = inside the combined window */
+/* window masks for one layer (0-3 BGs, 4 OBJ, 5 color): 1 = inside the combined window. The
+   windows cover the screen's 256 columns; a pixel of a widescreen band, beyond them, is as the
+   nearest edge column, so a window spanning the width goes on beside the picture (under water
+   All-Stars allows color math only inside window 2, $00-$FF below the surface, $04:8312: the
+   water's tint and gradient) */
 static void window_line(const snesppu_t *p, int layer, int x0, int w, uint8_t *mask) {
     uint8_t sel;
     int logic;
@@ -120,7 +124,7 @@ static void window_line(const snesppu_t *p, int layer, int x0, int w, uint8_t *m
     }
     int e1 = (sel >> 1) & 1, i1 = sel & 1, e2 = (sel >> 3) & 1, i2 = (sel >> 2) & 1;
     for (int i = 0; i < w; i++) {
-        int x = x0 + i;
+        int x = x0 + i < 0 ? 0 : x0 + i > 255 ? 255 : x0 + i;
         if (!e1 && !e2) { mask[i] = 0; continue; }
         int in1 = (x >= p->wh[0] && x <= p->wh[1]) ^ i1;
         int in2 = (x >= p->wh[2] && x <= p->wh[3]) ^ i2;

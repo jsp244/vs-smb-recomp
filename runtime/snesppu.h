@@ -36,7 +36,7 @@ typedef struct snesppu {
 
 /* Draws line y (0-238) of the screen into out: pixels x0 .. x0+w-1 of the screen (x0 may be
    negative or beyond 255: the background layers wrap round their tilemaps, sprites are placed
-   by their own x). Pixels are 0xAARRGGBB. */
+   by their own x, the windows are as at the nearest edge column). Pixels are 0xAARRGGBB. */
 void snesppu_line(const snesppu_t *p, int y, int x0, int w, uint32_t *out);
 void snesppu_obsel(snesppu_t *p);    /* derive the sprite name bases from obsel */
 void snesppu_sprite_size(const snesppu_t *p, int large, int *w, int *h);

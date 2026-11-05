@@ -199,7 +199,9 @@ Verified (headless harness with scripted input and RAM pokes, screenshots inspec
   (lava, fire bars, lifts), the treetop and mushroom levels, Lakitu, Bullet Bill and
   Hammer Bro stages; the title with its banner and the demo scrolling it away, the
   PUSH BUTTON, intermission, game-over and continue screens; 16:9 with the objects
-  beside the picture and the walk into the left band; the intermission compared with
+  beside the picture, the walk into the left band and, under water, the tint and the
+  gradient carried on into the bands; 8-4's lift along the lava in front of it, as in
+  the arcade (a falling lift sinks in, as in All-Stars); the intermission compared with
   All-Stars' own (run in a reference emulator), the castles' with Bowser breathing fire
   in its picture; the night sky's clouds and the floating score numbers as All-Stars
   draws them; the castle loops of 5-4, 7-4 and 8-4, where the blocks, the background
@@ -214,7 +216,9 @@ Verified (headless harness with scripted input and RAM pokes, screenshots inspec
   draws its own way, each reached with RAM pokes (a start page, star power, an object
   spawned) and compared with All-Stars in the reference emulator: the goal flag, the
   castle's star flag and fireworks, Bowser walking, breathing fire and falling upside
-  down, his flame, the castle's end with Toad's sack (1-4) and the princess (8-4),
+  down, the bridge taken away under him after the axe in all eight castles (each piece
+  on the arcade's frame, All-Stars' rubble sprite for sprite), his flame, the castle's
+  end with Toad's sack (1-4) and the princess (8-4),
   Podoboos, Bullet Bills, shells still and kicked, a vine, the cloud lift, springboards,
   Bloopers, Cheep-cheeps, Hammer Bros, Lakitu and Spinies, defeated enemies falling upside
   down, the water's surface; blocks hit from below in 1-1 and 1-2 (a ? block with a coin, the

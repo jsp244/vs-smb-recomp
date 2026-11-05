@@ -138,6 +138,10 @@ static struct {
 #define VS_AREA_OFS      0xACF5     /* area data: first index of each type; CHR addresses at $ACF9 */
 #define VS_AREA_ADDR     0xACF9
 #define VS_ENEMY_ADDR    0xACA7     /* enemy data CHR addresses: as many as there are areas */
+#define VS_BRIDGE_CELLS  0xCF20     /* BridgeCollapseData: the nametable low bytes of the axe, the chain, the 13 pieces */
+#define VS_BRIDGE_PAGE   0xCF6A     /* BridgeCollapse's LDA #$22: their high byte */
+#define VS_BRIDGE_MT     0xA92A     /* C_ObjectMetatile: the axe, the chain and the bridge as VS.'s parser puts them */
+#define N_BRIDGE_CELLS   15
 
 /* RAM of the engine (both games) */
 #define RAM_AREA_PTR     0x0750
@@ -1642,9 +1646,29 @@ static bool nt_shows(int col, int row, uint8_t v) {
     return nt[ty * 32 + tx] == t[0] && nt[(ty + 1) * 32 + tx] == t[1] && nt[ty * 32 + tx + 1] == t[2] && nt[(ty + 1) * 32 + tx + 1] == t[3];
 }
 
+/* Bowser's bridge. After the axe, VictoryMode's first task, BridgeCollapse ($CF2F), takes the axe, the chain and
+   then the bridge's 13 pieces away, one every 4 frames: RemBridge ($8CCE) writes the blank tiles through
+   VRAM_Buffer1 at the nametable address BridgeCollapseData gives ($22xx), and BridgeCollapseOffset ($0369)
+   counts them. The block buffer keeps the bridge (Bowser falls by his state, not through it), so the cells come
+   from the nametable: one of them the offset has passed, that VS.'s nametable shows blank and that VS.'s parser
+   filled with that object, is drawn empty, as All-Stars' own collapse ($03:D4D0) writes its blank tile there and
+   the castle's layer 2 shows through. A column the parser has since rendered over it holds other metatiles. */
+static bool bridge_gone(int col, int row, uint8_t v) {
+    int n = ram[0x0369];
+    if (!n || cart.prg[VS_BRIDGE_PAGE - 0x8000] != 0xA9) return false;
+    if (n > N_BRIDGE_CELLS) n = N_BRIDGE_CELLS;
+    for (int i = 0; i < n; i++) {
+        uint16_t a = (uint16_t)((cart.prg[VS_BRIDGE_PAGE + 1 - 0x8000] << 8) | cart.prg[VS_BRIDGE_CELLS - 0x8000 + i]);
+        if (((a >> 10) & 1) * 16 + ((a & 31) >> 1) != col || ((a >> 6) & 15) - 2 != row) continue;
+        return v == cart.prg[VS_BRIDGE_MT - 0x8000 + (i < 2 ? i : 2)] && nt_shows(col, row, 0);
+    }
+    return false;
+}
+
 static uint8_t cell_metatile(int col, int row) {
     if (!area.parsed[col]) return 0;
     uint8_t v = area.vs[col][row], s = area.smas[col][row];
+    if (bridge_gone(col, row, v)) return 0;
     /* the block buffer holds what is solid; scenery (below each group's bound, VS.'s BlockBuffLowBounds)
        is stored as 0 */
     uint8_t expect = v >= cart.prg[VS_BB_BOUNDS - 0x8000 + (v >> 6)] ? v : 0;
@@ -1856,7 +1880,14 @@ static void player_colors(snesppu_t *p, const uint8_t *r) {
    bars ($03:F443, tiles $BE/$BF), their explosion ($03:F4E6), the jumping coin ($05:DCA0: one 16x16
    sprite of the two NES ones, 4 pixels to the left), the lifts ($03:EC66, tile $87), brick chunks
    ($03:F3AC), hammers and air bubbles. Returns 0 for a sprite All-Stars has no counterpart for (the
-   coin's lower half, a hammer's second half), -1 for one that is not among these. */
+   coin's lower half, a hammer's second half), -1 for one that is not among these.
+   All-Stars draws its lifts at priority 2 ($2C, $03:EC97), behind the layer 1 tiles that have the
+   priority bit, its lava's ($88/$8B) among them, and its 8-4 has the lift that runs along the lava a
+   row higher than SMB's and VS.'s ($04:C28E: $6C where theirs is $6D), out of the lava. VS.'s runs at
+   y $D0, on the lava's top row, where the arcade draws it in front of the lava: so the lifts that move
+   sideways ($28, $2A) are in front of all of layer 1 (priority 3, set by build_sprites), and those that
+   move up or down (a falling one, the player on it) keep priority 2 and sink behind the lava as the
+   player does. */
 static int misc_sprite(snes_sprite_t *s, uint8_t tile, uint8_t nattr, int *sp) {
     switch (tile) {
     case 0x64: case 0x65: s->tile = (uint16_t)(0xBE + (tile - 0x64)); *sp = 4; return 1;
@@ -2000,6 +2031,45 @@ static void draw_bowser(snesppu_t *p, const uint8_t *r, struct special sp[6]) {
     for (int j = 0; j < 6; j++) {
         uint16_t t = (uint16_t)(0x100 | rom8(BOWSER_TILES + (uint32_t)((left ? 42 : 0) + frame * 6 + j)));
         add_sprite(p, x0 + px[j], y0 + (upside ? py_up[j] : py[j]) + 1, t, j != 2 && j != 5, upside, left, 2, 0);
+    }
+}
+
+/* The bridge's pieces as All-Stars lets them fall. Its BridgeCollapse leaves rubble where each piece was ($03:D4A0;
+   not for the axe and the chain), which its Bowser routine draws behind him ($05:CA13, $05:CA2E): 8 small sprites, two
+   columns of four 8-pixel rows down from the bridge's line ($A0), the left column lagging, in OBJ palette 1; 9 frames
+   of 3 (8 tiles each at $05:CAE5, the second table's from the fifth; the drop at $05:CB2D), so the first ones are the
+   piece itself. VS. takes a piece every 4 frames (BowserFeetCounter, $0364, from 4 down), so how long ago each went
+   follows from BridgeCollapseOffset and that counter, after the last one from how long Bowser has been falling
+   (MoveEnemySlowVert, $BE9B: his downward force grows by $0F a frame from InitVStf's 0); the rubble starts the frame
+   VS.'s nametable shows the piece gone, as All-Stars' leaves its layer 1 the frame its rubble appears. Placed with
+   layer 1's scroll. */
+#define AS_RUBBLE_TILES  0x05CAE5
+#define AS_RUBBLE_DROP   0x05CB2D
+#define AS_RUBBLE_Y      0x05CA3E   /* ADC #$A0: the bridge's line */
+static void bridge_rubble(snesppu_t *p) {
+    int b = ram[0x0368], k = ram[0x0369], d;   /* BowserFront_Offset, BridgeCollapseOffset */
+    /* VictoryMode (VS.'s OperMode 3: its HandleAxeMetatile, $DD67) in its first task, with Bowser in his slot */
+    if (ram[0x0770] != 3 || ram[0x0772] != 0 || b >= 6 || ram[0x16 + b] != 0x2D || k < 3) return;
+    if (rom8(AS_RUBBLE_Y) != 0x69) return;
+    if (k < N_BRIDGE_CELLS) d = 4 - ram[0x0364];   /* the frames since the last piece went */
+    else {
+        int t = ram[0xA0 + b] * 256 + ram[0x0434 + b];   /* his Y speed and move force: $0F a frame */
+        if (!(ram[0x1E + b] & 0x40) || t % 15) return;
+        d = t / 15;
+    }
+    uint16_t lv = ppu.line_v[160];
+    int sx = ((((lv >> 10) & 1) << 8) | ((lv & 0x1F) << 3) | ppu.line_fx[160]) & 0x1FF, y0 = rom8(AS_RUBBLE_Y + 1) + 1;
+    for (int i = 2; i < k && i < N_BRIDGE_CELLS; i++) {
+        int age = (k - 1 - i) * 4 + d - 1;
+        uint16_t a = (uint16_t)((cart.prg[VS_BRIDGE_PAGE + 1 - 0x8000] << 8) | cart.prg[VS_BRIDGE_CELLS - 0x8000 + i]);
+        int slot = ((a >> 10) & 1) * 16 + ((a & 31) >> 1), row = ((a >> 6) & 15) - 2;
+        if (age < 0 || age >= 27 || row < 0 || row >= 13 || !area.parsed[slot] || !bridge_gone(slot, row, area.vs[slot][row])) continue;
+        int f = age / 3, x = (slot * 16 - sx) & 0x1FF;
+        if (x >= 384) x -= 512;
+        for (int j = 0; j < 8; j++) {
+            uint16_t t = (uint16_t)(rom8(AS_RUBBLE_TILES + (uint32_t)(f * 8 + j)) | (f >= 4 ? 0x100 : 0));
+            add_sprite(p, x + (j >> 2) * 8, y0 + rom8(AS_RUBBLE_DROP + (uint32_t)(f + (j >> 2))) + (j & 3) * 8, t, 0, 0, 0, 2, 1);
+        }
     }
 }
 
@@ -2238,7 +2308,7 @@ static void build_sprites(snesppu_t *p, const uint8_t *r, int ahead, int screen,
         s->x = (int16_t)(o[3] + dx);
         s->y = (int16_t)(o[0] + 1);
         s->large = 0;
-        int sp, misc;
+        int sp, misc, prio = behind ? 0 : 2;
         if (owner[i] == OWN_PLAYER) {
             int k = owner_slot[i];
             if (player_flip >= 0) { hf = player_flip & 1; vf = player_flip >> 1; }
@@ -2259,6 +2329,7 @@ static void build_sprites(snesppu_t *p, const uint8_t *r, int ahead, int screen,
             uint8_t moved = id == 0x2E ? powerup_tile[tile][at & 3] : enemy_tile[tile][at];
             if (!moved && (misc = misc_sprite(s, tile, nattr, &sp)) >= 0) {   /* a fire bar, a lift */
                 if (!misc) continue;
+                if (tile == 0x5B && (id == 0x28 || id == 0x2A) && !behind) prio = 3;   /* a sideways lift */
             } else {
                 s->tile = moved ? moved : tile;
                 sp = id == 0x2E ? powerup_pal(r) : enemy_pal[id][pal];
@@ -2276,9 +2347,10 @@ static void build_sprites(snesppu_t *p, const uint8_t *r, int ahead, int screen,
             s->tile = tile;
             sp = pal_default[pal];
         }
-        s->attr = (uint8_t)((vf << 7) | (hf << 6) | ((behind ? 0 : 2) << 4) | (sp << 1));
+        s->attr = (uint8_t)((vf << 7) | (hf << 6) | (prio << 4) | (sp << 1));
         p->nspr++;
     }
+    if (r && !screen) bridge_rubble(p);
 }
 
 /* ---- the status bar ---- */
