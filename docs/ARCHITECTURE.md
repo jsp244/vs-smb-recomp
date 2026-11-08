@@ -223,10 +223,18 @@ DMA'd at the next NMI). It runs again from GameEngine to $AE14 (past the last
 sprite update, before the area parser) with ScreenLeft/ScreenRight ($071A-$071D)
 moved 112 pixels towards a band; the sprites that differ from the PPU's OAM are
 the ones the camera placed, minus any that wrapped round the moved screen's 8-bit
-X (the player, whom the game never hides at the sides). They are drawn into the
-band and into the 8-pixel columns at the picture's edges where the PPU's frame
-shows background, with sprite priority and behind-background rules. With the
-camera left where it was, the repeat builds the PPU's OAM byte for byte
+X. The player's own eight (by Player_SprDataOffset, $06E4, not by their tiles)
+are the picture's wherever the PPU shows them, as the game never hides him at
+the sides: the repeat does not redo his frame (his bounding box is made before
+GameEngine with the real camera, every other object's in it with the moved one,
+112 pixels apart, so no lift holds him there and he falls in another pose, and
+an enemy 112 pixels away seems to touch him), and past the moved screen's edge
+his 8-bit X puts him 256 pixels off. Of his sprites the band takes only those
+the real frame hides beside the screen (bandwalk.c), where his X has not
+wrapped. The sprites the band takes are drawn into the band and into the 8-pixel
+columns at the picture's edges where the PPU's frame shows background, with
+sprite priority and behind-background rules. With the camera left where it was,
+the repeat builds the PPU's OAM byte for byte
 (`nes-headless --ws-oam-check`: 62,688 frames over the 40 level runs, no
 difference); a repeat costs 0.01-0.03 ms.
 
@@ -240,7 +248,16 @@ puts the start page minus one in A, finishes it, then calls AreaParserTaskHandle
 nametable writes it queues in VRAM_Buffer2 ($0341, the NMI's format) to a copy of
 the nametables. Band pixels left of the start page come from that copy while the
 area on screen (world, level, area number, type and data offset) is the one it was
-made for.
+made for. The remastered graphics draw that page in their band at the same moments
+(`widescreen_fill_page` tells them so, with the start page and a new number for each
+area start), with the area they draw in place of RAM's numbers, which VS. moves on to
+the next area's while a warp zone's pipe or a level's end still shows the old one
+(see "Jumps of the machine" below). All-Stars' parser parses its 16 columns of VS.'s
+data once per area start, in a sandbox of its own set up as for the area but a page
+earlier, and they are decorated as every column is, the start page's first columns on
+their right. In layer 1 they take the slots of the page after the start page until
+VS.'s parser renders that page's columns there, which it does only once the band has
+left them behind.
 
 **Walking into the band.** The game stops the player at its screen's left edge
 (ChkPOffscr puts him back there when his horizontal offscreen bits say he is
@@ -330,6 +347,46 @@ from there. A replay less than two pages past a loop's new page goes through tha
 too (at its page, VS.'s loop table: $BF84, $BF8F, the offsets in PRG RAM at $6000) if
 its columns then match VS.'s block buffer better than without it.
 
+**Jumps of the machine.** Run-ahead's own return to the frame it started from is
+followed by the snapshots above; every other jump (a slot load, each rewind or forward
+step, Start + Select's rollback, the game-shot test's state) is reported with
+`allstars_reset`, and the area is rebuilt from the loaded state at the next picture.
+Which area that is comes from the areas started before (their numbers, the page their
+parser began on and the frame, kept as each first column is parsed): the latest one
+before the loaded frame with the same numbers, or with the area data PRG RAM holds,
+since VS. sets the next area's numbers while the old one is still on the screen (a warp
+zone's pipe sets the world as Mario goes down, 49 frames before the screen goes black;
+the end of a level or a world its area number and type). The same holds without a jump:
+until VS.'s InitializeArea copies the next area's data to PRG RAM, the area built is the
+one shown, so the warp zone stays in All-Stars' art down to the black screen. A rebuild
+replays to the column the parser renders next, which while a column's tasks run is the
+one after RAM's (AreaParserTaskNum, $071F), and past a castle loop seen in that visit it
+takes up layer 2's seam as the loop left it (or stops at the loop, when the parser has
+not rendered past it yet, and lets parser_column take the loop's step again). Its
+sandboxed InitializeArea reads the area's data through the PPU data port stepping by
+one, as the game does when it starts an area (between a column's writes the PPU steps by
+32). A jump to a moment of the same visit at which the parser renders the same column,
+with no castle loop in between (holding rewind while standing, or between two columns),
+keeps the columns as they are, so that holding rewind costs about what drawing does. The
+areas started and the loops seen after a jump's frame, but recorded before the jump, are
+of the timeline the machine left (a rewind to before a death or a castle's wrong path,
+and the game going on otherwise): fast-forward can still take that stretch again until
+the game has run on for the frontend's undo window (1.5 s), after which they are
+forgotten, so that a later rebuild takes no start page or layer 2 seam this timeline
+never had. A jump also leaves widescreen.c's own record of the area (its copy of the
+area's start, which the band's page before is made from, and its flag of a castle loop
+since) as the frames it last ran had it, until VS. starts another area: in between, the
+remastered band shows the page before and blacks the band before the area's start by the
+visit built (its start page) and the castle loops seen in it up to the moment loaded,
+keeping the page it made in that visit. The arcade's band keeps its own record. A jump
+that lands between InitializeArea and the area's first column (the WORLD screen after a
+death, a pipe's black frames) leaves that start unrecorded, since its hook ran before the
+jump: the first column parsed at the screen's left edge, where VS.'s parser is only as an
+area starts, is then taken as the start, unless it is recorded already in this run. A
+power-on (a game started from the launcher, Stop, new DIP switches) counts the frames from
+0 again: the records stay, for a state saved before it, but go by their run's number
+(`allstars_power`), so that no start or castle loop of one run passes for another's.
+
 **All-Stars' own decorations.** All-Stars' own levels carry row-15 objects the NES format
 has no form for (three bytes; its own kinds, dispatched by $04:8E15 from a table at
 $04:8E43, each writing a few metatiles of its own): $32 a castle's first staircase as
@@ -372,7 +429,11 @@ cells that VS.'s parser filled with that object is drawn empty from the frame th
 nametable shows it blank, as All-Stars' own collapse ($03:D4D0) writes its blank there,
 and each piece leaves All-Stars' rubble falling for 27 frames ($03:D4A0, drawn by its
 Bowser routine at $05:CA13), aged from the offset, Bowser's feet counter ($0364) and,
-after the last piece, how long he has been falling. Layer 2 is All-Stars' hills from its
+after the last piece, how long he has been falling. From BridgeCollapse's first step (the
+axe's cell, up to 32 frames after the axe) to the end of his fall Bowser roars as All-Stars'
+does ($03:D53C, $05:D060: its frames 6 and 5 by turns every 4 frames), on the same count;
+once his falling speed is held, how far he has fallen below the height his bounding box
+keeps from the bridge gives it. Layer 2 is All-Stars' hills from its
 RAM pages at half the camera's speed; layer 3 its clouds at a quarter above ground (under
 water the surface's waves, elsewhere nothing), below the status bar's IRQ split, and
 above it the status bar from VS.'s nametable in All-Stars' font. At night ($0ED1) the
@@ -385,7 +446,8 @@ way, from before the loop left of the seam the strips reached. The sky's gradien
 animated tiles (? blocks, coins, bushes, water, lava) are All-Stars' frames at VS.'s
 frame counter. Sprites come from VS.'s OAM, attributed to their owners by VS.'s
 sprite-data offsets (the copy of RAM the engine built them from, with one shuffler
-step undone when that copy is a frame ahead): the player's 8 sprites become
+step undone when that copy is a frame ahead; the bands' sprites, which that copy's own
+repeat built, by its offsets as they are): the player's 8 sprites become
 All-Stars' frame for the same pose (8 tiles per pose in bank $0A, Luigi's $4000
 further) in All-Stars' colours (Mario, Luigi, fiery, the star's 4-set cycle); enemies
 keep the NES tile numbers, which All-Stars mostly kept, with the tiles it moved found

@@ -45,9 +45,14 @@ void allstars_music_mix(int16_t *buf, uint32_t n, uint32_t rate);
 
 /* Connects to the running VS. Super Mario Bros. (hooks in the game's area start, area parser and
    frame engine; read-only) and forgets what was built for the previous ROM or state. Called after a
-   ROM or state load and after allstars_load. */
+   ROM load and by allstars_load. */
 void allstars_attach(void);
-void allstars_reset(void);   /* a state was loaded or the machine reset: rebuild the area */
+/* after every jump of the machine that is not run-ahead's own return (a state load, a rewind or forward
+   step, Start + Select's rollback): the area of the loaded state is rebuilt at the next picture */
+void allstars_reset(void);
+/* after the machine is powered on again (frames count from 0): a new run, whose area starts and castle
+   loops are kept apart from those seen before (which stay for states saved then) */
+void allstars_power(void);
 /* the instructions the hooks watch (for the frame engine's dispatcher in widescreen.c) */
 void allstars_hook(uint16_t pc);
 

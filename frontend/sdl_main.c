@@ -1213,6 +1213,7 @@ static int chord_rollback(void *scratch) {
     else for (int i = 0; i < pushes; i++) rewind_pop(scratch);
     rewind_forget_redo();
     nes_state_load(chord_states + (size_t)((chord_head + CHORD_RING - k) % CHORD_RING) * chord_size, chord_size);
+    allstars_reset();
     apu_flush_samples();
     chord_clear();
     return k;
@@ -1360,6 +1361,7 @@ static int state_load(void) {
     fclose(f);
     int ok = 0;
     if (n == len && nes_state_load(buf, len) == 0) {
+        allstars_reset();         /* the remastered graphics rebuild the area of the loaded state */
         apu_flush_samples();      /* the sound queued before the load belongs to the old timeline */
         audio_out_clear();
         rewind_clear(); chord_clear();
@@ -1802,7 +1804,7 @@ static void open_menu(void) {
 static void start_game(void) {
     if (!rom_ok) { menu.tab = TAB_ROM; menu.focus = 1; ui_select_first(&menu); return; }
     /* the launcher's attract mode was running: begin fresh, with the board's real switches */
-    if (!game_started) { sys.vs_dip = dip_bits(); nes_power(); rewind_clear(); chord_clear(); }
+    if (!game_started) { sys.vs_dip = dip_bits(); nes_power(); allstars_power(); rewind_clear(); chord_clear(); }
     game_started = 1;
     state = ST_GAME;
     resume_suppress();
@@ -1888,7 +1890,7 @@ static void apply_dips(void) {
     write_config();
     if (!game_started) {
         sys.vs_dip = attract_dips();
-        if (rom_ok) { nes_power(); rewind_clear(); chord_clear(); }
+        if (rom_ok) { nes_power(); allstars_power(); rewind_clear(); chord_clear(); }
     } else {
         sys.vs_dip = dip_bits();
         snprintf(menu.status, sizeof menu.status, "The new switch settings take effect at the next reset (Play > Reset game)");
@@ -1919,7 +1921,7 @@ static void menu_action(ui_event e) {
         if (rom_ok) {
             battery_check(1);
             sys.vs_dip = attract_dips();
-            nes_power(); rewind_clear(); chord_clear(); game_started = 0;
+            nes_power(); allstars_power(); rewind_clear(); chord_clear(); game_started = 0;
             refresh_rom_items(); ui_select_first(&menu);
         }
         break;
@@ -2012,7 +2014,7 @@ static uint64_t machine_hash(void *buf, size_t sz) {
 static uint8_t chord_test_wram[8192];   /* battery RAM at the start: every run begins from it */
 static void chord_test_power(void) {
     memcpy(cart.wram, chord_test_wram, sizeof chord_test_wram);
-    nes_power(); chord_clear(); rewind_clear();
+    nes_power(); allstars_power(); chord_clear(); rewind_clear();
     prev_game_pad = 0; suppress_mask = 0; chord_test_frames = 0; coin_timer = coin_was_down = 0;
 }
 
@@ -2189,6 +2191,7 @@ static int rewind_selftest(int frames) {
     for (int f = frames; f >= 4; f -= 2) {
         if (!rewind_pop(st)) { printf("rewind-test: history ended early at frame %d\n", f); ok = 0; break; }
         nes_state_load(st, sz);
+        allstars_reset();
         apu_flush_samples();
         nes_set_pad(0, TEST_PAD(f - 1));
         nes_run_frame();
@@ -2215,6 +2218,7 @@ static int rewind_selftest(int frames) {
             if (f == frames) { if (memcmp(st, final_state, sz) != 0) { printf("rewind-test: forward did not return to the newest state\n"); ok = 0; } }
             else {
                 nes_state_load(st, sz);
+                allstars_reset();
                 apu_flush_samples();
                 nes_set_pad(0, TEST_PAD(f + 1));
                 nes_run_frame();
@@ -2228,6 +2232,7 @@ static int rewind_selftest(int frames) {
     if (ok) {
         rewind_pop(st); rewind_pop(st);
         nes_state_load(st, sz);
+        allstars_reset();
         redo_hold = REDO_WINDOW;
         int first = 0;
         for (int i = 1; i <= REDO_WINDOW + 4 && !first; i++) { nes_run_frame(); if (history_step(i, st, sz)) first = i; }
@@ -2490,6 +2495,7 @@ int main(int argc, char **argv) {
             int ok = n == len && nes_state_load(buf, len) == 0;
             free(buf);
             if (!ok) { fprintf(stderr, "game-shot: cannot load the state %s\n", shot_state); SDL_Quit(); return 1; }
+            allstars_reset();
         } else {
             sys.vs_dip = dip_bits();   /* as a game started from the menu */
             nes_power();
@@ -2717,6 +2723,7 @@ int main(int argc, char **argv) {
             redo_hold = REDO_WINDOW;
             if (rewind_pop(rw_state)) {
                 nes_state_load(rw_state, rw_size);
+                allstars_reset();
                 apu_flush_samples();
                 chord_clear();
                 vs_input(game_pad());
@@ -2734,6 +2741,7 @@ int main(int argc, char **argv) {
                speed rewind went back, and stop where the rewind began */
             if (rewind_redo(rw_state)) {
                 nes_state_load(rw_state, rw_size);
+                allstars_reset();
                 apu_flush_samples();
                 chord_clear();
                 vs_input(game_pad());
@@ -2774,7 +2782,8 @@ int main(int argc, char **argv) {
             } else {
                 if (cfg.runahead > 0 && !fast) {
                     /* run-ahead: show the frame the game will reach `runahead` frames from now with this
-                       input held, then return to the real timeline. Audio comes from the real frame only. */
+                       input held, then return to the real timeline. Audio comes from the real frame only.
+                       (No allstars_reset: the remastered graphics follow this short return themselves.) */
                     nes_state_save(ra_state, ra_size);
                     for (int i = 0; i < cfg.runahead; i++) nes_run_frame();
                     draw_game();

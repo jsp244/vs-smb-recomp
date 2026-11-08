@@ -54,6 +54,9 @@
 #define RAM_PARSER_PAGE       0x0725   /* the area parser's next column: page */
 #define RAM_PARSER_COLUMN     0x0726   /* and metatile column (16 px) in it */
 #define RAM_PARSER_TASKNUM    0x071F
+#define RAM_PLAYER_PAGE       0x006D   /* the player's position in the level: page */
+#define RAM_PLAYER_X          0x0086   /* and pixel in it */
+#define RAM_PLAYER_SPR_OFS    0x06E4   /* where his 8 sprites start in the sprite page (Player_SprDataOffset) */
 #define RAM_VRAM_BUF2_OFS     0x0340   /* the buffer of nametable writes the renderer fills (the NMI empties it) */
 #define RAM_VRAM_BUF2         0x0341
 #define RAM_OAM               0x0200   /* the sprite page the NMI copies to the PPU */
@@ -300,12 +303,27 @@ static int line_world[240];
 static int frame_left;
 static int fill_on;
 
+/* whether the band shows the page before the area's start page this frame (screen's left edge at left),
+   for the area with the numbers ids (NULL: RAM's) */
+static int fill_shown(int level, int left, const uint8_t *ids) {
+    if (level && area_copy.valid && fill.gen != area_copy.gen) make_fill();
+    int on = widescreen_fill && level && fill.start >= 0 && left >= fill.start && !looped;
+    for (int k = 0; on && k < 5; k++)
+        if ((ids ? ids[k] : ram[area_id_addr[k]]) != fill.id[k]) on = 0;
+    return on;
+}
+
+int widescreen_fill_page(const uint8_t ids[5], int *start, uint32_t *gen) {
+    int lo, hi;
+    if (!fill_shown(widescreen_level_window(&lo, &hi), ram[RAM_SCREEN_LEFT_PAGE] * 256 + ram[RAM_SCREEN_LEFT_X], ids) || !fill.ok) return 0;
+    *start = fill.start;
+    *gen = fill.gen;
+    return 1;
+}
+
 static void frame_area(int level) {
     int left = frame_left = ram[RAM_SCREEN_LEFT_PAGE] * 256 + ram[RAM_SCREEN_LEFT_X];
-    if (level && area_copy.valid && fill.gen != area_copy.gen) make_fill();
-    fill_on = widescreen_fill && level && fill.start >= 0 && left >= fill.start && !looped;
-    for (int k = 0; fill_on && k < 5; k++)
-        if (ram[area_id_addr[k]] != fill.id[k]) fill_on = 0;
+    fill_on = fill_shown(level, left, NULL);
     for (int ly = 0; ly < 240; ly++) {
         int d = (line_origin_x(ly) - left) & 511;
         if (d > 256) d -= 512;
@@ -314,10 +332,13 @@ static void frame_area(int level) {
 }
 
 /* the picture's columns [lo, hi) that hold the level (lo < 0 and hi > 256 reach into the bands);
-   0 when this frame shows no level */
-static int level_window(int *lo, int *hi);
+   0 when this frame shows no level; loop: the area's parser has gone through a castle loop since the
+   area began (looped, for this module's own frames) */
+static int level_window_loop(int *lo, int *hi, int loop);
+static int level_window(int *lo, int *hi) { return level_window_loop(lo, hi, looped); }
 int widescreen_level_window(int *lo, int *hi) { return level_window(lo, hi); }
-static int level_window(int *lo, int *hi) {
+int widescreen_level_window_loop(int *lo, int *hi, int loop) { return level_window_loop(lo, hi, loop); }
+static int level_window_loop(int *lo, int *hi, int loop) {
     int left = ram[RAM_SCREEN_LEFT_PAGE] * 256 + ram[RAM_SCREEN_LEFT_X];
     int front = ram[RAM_PARSER_PAGE] * 256 + ram[RAM_PARSER_COLUMN] * 16;
     /* the pages wrap: a castle's loop (ExecGameLoopback) takes four off every page number, and the
@@ -333,7 +354,7 @@ static int level_window(int *lo, int *hi) {
     int d = (line_origin_x(ly) - left) & 511;
     if (d > 8 && d < 512 - 8) return 0;
     *lo = span - 512 + MARGIN;
-    if (*lo < -left && !looped) *lo = -left;   /* nothing before the start of the area (but a loop's) */
+    if (*lo < -left && !loop) *lo = -left;   /* nothing before the start of the area (but a loop's) */
     *hi = span - MARGIN;
     return 1;
 }
@@ -415,15 +436,28 @@ static void draw_sprites(uint8_t *out, int px0, int py0, int w, int h, int lo, i
         if (c1 > px0 + w) c1 = px0 + w;
         if (c0 >= c1) continue;
         uint8_t oam[256];
-        if (!engine_oam(dx, oam, 0)) continue;
+        const engine_copy_t *copy = shown_copy(0);   /* the copy engine_oam runs */
+        if (!copy || !engine_oam(dx, oam, 0)) continue;
         /* only the sprites the camera placed: those that differ from the real frame's (sprite 0 does not).
-           One the real frame shows that lands elsewhere has wrapped round the moved screen's 8-bit X:
-           the player, whom the game never hides at the sides because he cannot leave the screen. */
+           The player's own eight (by his sprite data offset, not by their tiles) are the picture's wherever
+           the real frame shows them, as the game never hides him at the sides. This run does not redo his
+           frame: his bounding box was made before GameEngine with the real camera, every other object's
+           here with the moved one, 112 pixels apart, so no lift holds him here (he falls, in another pose)
+           and an enemy 112 pixels away seems to touch him; and beyond the moved screen's edge his 8-bit X
+           wraps round to its other side. So of his the band takes only those the real frame hides beside
+           the screen (bandwalk.c), where that X has not wrapped. Any other sprite the real frame shows the
+           same way that lands elsewhere has wrapped round too. */
+        int player = copy->ram[RAM_PLAYER_SPR_OFS] >> 2;
+        int player_x = (int16_t)(uint16_t)((copy->ram[RAM_PLAYER_PAGE] << 8 | copy->ram[RAM_PLAYER_X]) -
+                                           (copy->ram[RAM_SCREEN_LEFT_PAGE] << 8 | copy->ram[RAM_SCREEN_LEFT_X]));
         int list[64], n = 0;
         for (int i = 0; i < 64; i++) {
             const uint8_t *e = oam + i * 4, *p = ppu.oam + i * 4;
             if (e[0] >= 0xEF || !memcmp(e, p, 4)) continue;
-            if (p[0] < 0xEF && e[0] == p[0] && e[1] == p[1] && e[2] == p[2] && e[3] + dx != p[3]) continue;
+            if (i >= player && i < player + 8) {
+                int from = e[3] + dx - player_x;   /* his columns are 0 and 8 from his left edge, 256 off if wrapped */
+                if (p[0] < 0xEF || from < -128 || from >= 128) continue;
+            } else if (p[0] < 0xEF && e[0] == p[0] && e[1] == p[1] && e[2] == p[2] && e[3] + dx != p[3]) continue;
             list[n++] = i;
         }
         if (!n) continue;

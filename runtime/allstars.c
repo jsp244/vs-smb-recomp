@@ -913,6 +913,10 @@ static void decorate(uint8_t out[13], const uint8_t *const win[7], int type, int
 }
 
 /* ---- the area being shown ---- */
+/* an area as VS. started it: its numbers (as area_id_addr), the page its parser began on, the frame and the run
+   (power_epoch) it was in (area_start) */
+typedef struct { bool ok; uint8_t id[5], page; uint64_t frame; uint32_t seq, epoch; } visit_t;
+
 static struct {
     bool     pending;          /* InitializeArea ran in VS.: build at its first parsed column */
     bool     ready;            /* the sandbox holds this area */
@@ -928,6 +932,10 @@ static struct {
     uint16_t bg2_scroll, bg3_scroll;
     int      bg2_pages;        /* how many pages of layer 2 the area setup filled: they repeat */
     int      bg2_seam;         /* after a castle loop, layer 2's x left of which it shows what it did before (-1: none) */
+    uint8_t  data[1024];       /* the area's data (its objects, from VS.'s data pointer in PRG RAM) it was built from */
+    int      data_len;
+    visit_t  start;            /* the visit it was built for (see area_start; ok false: its start not known) */
+    uint64_t frame;            /* the picture its columns are those of (its last column parsed, its rebuild) */
 } area;
 
 static const uint16_t area_id_addr[5] = { RAM_WORLD, RAM_LEVEL, RAM_AREA_NUM, RAM_AREA_TYPE, 0x074F };
@@ -948,14 +956,120 @@ static const uint16_t header_vars[] = { 0x0744, 0x0742, 0x0733, 0x0743, 0x0727, 
 
 /* The page VS.'s parser began the area it is in on (InitializeArea's start: the halfway page after a
    death, the entrance page after a pipe), seen at its first column; the halfway page is cleared later,
-   so a rebuild cannot find it in the RAM of that moment. Forgotten after a state load (the start is then
-   InitializeArea's from that RAM). */
-static struct { bool ok; uint8_t id[5], page; } area_start;
+   so a rebuild cannot find it in the RAM of that moment. After a jump of the machine (allstars_reset) the
+   areas started before (visits: their numbers, that page and the frame) say which one the loaded state
+   is in (resolve_jump); with none, the start is InitializeArea's from the loaded RAM. */
+static visit_t area_start;
+static bool jumped;            /* allstars_reset: the next rebuild resolves the area from the visits */
+/* From a jump until VS. starts another area (its InitializeArea), widescreen.c's copy of the area's start, which
+   its band's page before is made from, and its flag of a castle loop since are those of the frames it last ran
+   (a jump does not restore them, and holding rewind runs only every other frame): the page before a part-way
+   start (write_bg1_before) and the band before the area's start then follow the visit built and its loops seen */
+static bool ws_stale;
+#define N_VISITS 16
+static visit_t visits[N_VISITS];
+static int visit_head;
+/* and the castle loops seen (parser_column), by the visit (its frame and run) they were in: the frame and layer
+   2's seam the loop left, which a rebuild after a jump to a later moment of that visit takes up again */
+#define N_LOOPS_SEEN 64
+static struct { uint64_t visit, frame; int seam; uint32_t seq, epoch; } loops_seen[N_LOOPS_SEEN];
+static int loops_head;
+/* A power-on (allstars_power) counts VS.'s frames from 0 again: the records stay, for a state saved before it
+   (resolve_jump), but those of each run go by its number, so that frames of two runs are never taken for one */
+static uint32_t power_epoch;
+/* The records (visits and loops, numbered as they are made) of moments after a jump that were made before
+   it belong to the timeline the machine left: a rewind goes back to before a death, a pipe or a castle's
+   loop, and the game goes on otherwise. Fast-forward can still take the rewound stretch again until the
+   game has run on for the frontend's undo window (90 frames: REDO_WINDOW in sdl_main.c, plus run-ahead's),
+   after which nothing returns to it and they are forgotten (forget_left_behind), so that a later rebuild
+   (rewinding again, a state load) takes no start page or layer 2 seam this timeline never had. Those of
+   the frames up to the rebuild after the jump stay: the game ran them before parser_column could record
+   them again (a resync was waiting), so the old records are this timeline's too. */
+#define UNDO_WINDOW 96
+static uint32_t rec_seq;
+static struct { bool on, rebuilt; uint64_t frame, first; uint32_t seq; } left_behind;
+
+static void forget_left_behind(void) {
+    if (!left_behind.on || !left_behind.rebuilt || ppu.frame <= left_behind.frame + UNDO_WINDOW) return;
+    left_behind.on = false;
+    for (int i = 0; i < N_VISITS; i++)
+        if (visits[i].ok && visits[i].seq < left_behind.seq && visits[i].frame > left_behind.first) visits[i].ok = false;
+    for (int i = 0; i < N_LOOPS_SEEN; i++)
+        if (loops_seen[i].frame && loops_seen[i].seq < left_behind.seq && loops_seen[i].frame > left_behind.first) loops_seen[i].frame = 0;
+}
+
+/* at a hook, the frame whose picture shows what the engine does now (it runs in the NMI, from the end of the
+   picture before into the next one's first lines): the ppu.frame a picture drawn after it has */
+static uint64_t frame_now(void) { return ppu.frame + (ppu.scanline >= 240 ? 1u : 0u); }
+
+/* the loops of the visit up to the picture of frame f, and the latest one's seam (-1: none) */
+static int loops_until(const visit_t *v, uint64_t f, int *seam) {
+    int n = 0;
+    uint64_t latest = 0;
+    if (seam) *seam = -1;
+    for (int i = 0; i < N_LOOPS_SEEN; i++)
+        if (loops_seen[i].frame && loops_seen[i].visit == v->frame && loops_seen[i].epoch == v->epoch && loops_seen[i].frame <= f) {
+            n++;
+            if (seam && loops_seen[i].frame >= latest) { latest = loops_seen[i].frame; *seam = loops_seen[i].seam; }
+        }
+    return n;
+}
 
 static int start_page(const uint8_t *r) {
     if (!area_start.ok) return -1;
     for (int i = 0; i < 5; i++) if (area_start.id[i] != r[area_id_addr[i]]) return -1;
     return area_start.page;
+}
+
+/* whether the area data VS.'s InitializeArea copied to PRG RAM ($6200: its header and objects) is VS.'s area
+   (type t, number n) */
+static bool data_is(int t, int n) {
+    static uint8_t d[1024];
+    int len = vs_area_data(t, n, d, sizeof d);
+    return len > 2 && memcmp(d, cart.wram + 0x200, (size_t)len) == 0;
+}
+
+/* VS. has just taken a castle loop of world `world` (ExecGameLoopback, $BFA5: its parser four pages back, at the
+   loop page's first column, with AreaDataOffset from the loop table in PRG RAM) and its parser has not rendered that
+   column yet, so parser_column has not seen the loop: the screen is four pages further back than the loops seen
+   say, for the few frames until that column. Arriving at that column from the left gives the same RAM, but the
+   screen is then not left of the area's start, so counting a loop there changes nothing. */
+static bool loop_pending(int world) {
+    if (ram[RAM_COLUMN] != 0) return false;
+    for (int y = 0; y < N_LOOPS; y++)
+        if (cart.prg[VS_LOOP_WORLD - 0x8000 + y] == world && ram[RAM_PAGE] + 4 == cart.prg[VS_LOOP_PAGE - 0x8000 + y] &&
+            ram[RAM_DATA_OFS] == cart.wram[VS_LOOP_OFS - 0x6000 + y])
+            return true;
+    return false;
+}
+
+/* After a jump: the area the loaded screen shows, in ids (world, level, area number, type, data offset; RAM's
+   on the way in), and where it began (area_start). It is the latest visit started before the loaded frame with
+   these numbers, or else with the data PRG RAM holds: VS. sets the next area's numbers while the old one is
+   still on the screen (the warp zone's pipes, a level's or a world's end), and the type and offset tell the
+   area's data apart. A visit whose start is right of the loaded screen is another one (VS. never scrolls
+   back but by a castle's loops, four pages each, the one it has just taken too), as is any when none fits:
+   the start is then InitializeArea's. */
+static void resolve_jump(uint8_t ids[5]) {
+    jumped = false;
+    area_start.ok = false;
+    bool ids_ok = data_is(ids[3] & 3, ids[4] & 31);   /* RAM's numbers are those of the area whose data it holds */
+    const visit_t *found = NULL;
+    for (int pass = 0; pass < 2 && !found; pass++)
+        for (int k = 1; k <= N_VISITS && !found; k++) {
+            const visit_t *v = &visits[(visit_head - k) & (N_VISITS - 1)];
+            if (!v->ok || v->frame > ppu.frame || v->id[4] != ids[4]) continue;
+            if (pass == 0 ? ids_ok && memcmp(v->id, ids, 5) == 0 : data_is(v->id[3] & 3, v->id[4] & 31)) found = v;
+        }
+    if (found) {
+        memcpy(ids, found->id, 5);
+        /* each castle loop: the screen four pages back (the one VS. has just taken too) */
+        int back = 4 * (loops_until(found, ppu.frame, NULL) + (loop_pending(found->id[0]) ? 1 : 0));
+        if (ram[0x071A] + back >= found->page) area_start = *found;
+        return;
+    }
+    if (!ids_ok)
+        for (int t = 0; t < 4; t++) if (data_is(t, ids[4] & 31)) { ids[3] = (uint8_t)t; break; }
 }
 
 static void area_header(const uint8_t *r, uint8_t v[N_HEADER_VARS]) {
@@ -1036,6 +1150,8 @@ static void build_area(const uint8_t *r) {
         raw[n++] = b; src++;
         if (b == 0xFD) break;
     }
+    area.data_len = n - 2;
+    memcpy(area.data, raw + 2, (size_t)area.data_len);
     int m = to_allstars_format(raw, n, conv, sizeof conv);
     for (int i = 0; i < m; i++) w[AREA_DATA_COPY - 0x7E0000 + (uint32_t)i] = conv[i];
     w[0xFA] = (uint8_t)((AREA_DATA_COPY + 2) & 0xFF);
@@ -1068,6 +1184,25 @@ static bool same_area(void) {
     return true;
 }
 
+/* whether PRG RAM holds the area data the area was built from */
+static bool same_data(void) {
+    if (area.data_len <= 0) return false;
+    uint16_t src = (uint16_t)(ram[0xE7] | (ram[0xE8] << 8));
+    for (int i = 0; i < area.data_len; i++, src++)
+        if (src < 0x6000 || src >= 0x6800 || cart.wram[src - 0x6000] != area.data[i]) return false;
+    return true;
+}
+
+/* whether VS.'s nametables still show the area built. VS. sets the next area's numbers while the old one is
+   still on the screen: a warp zone's pipe ($075F, $075C, $0760 as Mario starts going down, for the 49 frames
+   until the screen goes black), its NextArea at the end of a level (the area number and type), the world's
+   end; only its InitializeArea, which copies the next area's data to PRG RAM, leaves the old one, and the
+   screen goes black before the next one is drawn. So until VS. starts another area, the area whose data PRG
+   RAM still holds is the one on the screen (a jump of the machine rebuilds first: allstars_reset) */
+static bool built_area_shown(void) {
+    return same_area() || (!area.pending && ram[0x074F] == area.id[4] && same_data());
+}
+
 /* VS.'s metatile buffer holds the column it parsed last: keep it with All-Stars' one for that column */
 static void keep_vs_column(int world) {
     int slot = world & 31;
@@ -1094,7 +1229,7 @@ static void finish_column(int s) {
         int n = (s + k) & 31;
         win[k + 3] = area.have[n] && ((area.world_col[n] - area.world_col[s] - k) & 63) == 0 ? area.plain[n] : NULL;
     }
-    decorate(area.smas[s], win, ram[RAM_AREA_TYPE] & 3, area.world_col[s]);
+    decorate(area.smas[s], win, area.id[3] & 3, area.world_col[s]);
 }
 
 /* a column parsed (All-Stars' metatiles in w's metatile buffer): kept as it is, and it and the three before it
@@ -1123,20 +1258,46 @@ static void loop_back(uint8_t *w, const uint8_t *r) {
     w[RAM_DATA_OFS] = (uint8_t)(ofs + extra);
 }
 
+/* whether the area start at the column VS.'s parser renders now is recorded already in this run (its frame,
+   numbers and page) */
+static bool visit_seen(void) {
+    uint64_t f = frame_now();
+    for (int i = 0; i < N_VISITS; i++) {
+        const visit_t *v = &visits[i];
+        bool same = v->ok && v->epoch == power_epoch && v->frame == f && v->page == ram[RAM_PAGE];
+        for (int k = 0; same && k < 5; k++) if (v->id[k] != ram[area_id_addr[k]]) same = false;
+        if (same) return true;
+    }
+    return false;
+}
+
 static void parser_column(void) {
-    if (area.resync) return;   /* rebuilt from scratch at the next picture */
-    if (area.pending || !area.ready || !same_area()) {
-        /* a new area, or not the one built: replayed from its start at the next picture (VS. does not
-           always parse an area from its first column: its demo goes on from the title's screen) */
-        if (area.pending) {
-            area_start.ok = true;
-            for (int i = 0; i < 5; i++) area_start.id[i] = ram[area_id_addr[i]];
-            area_start.page = ram[RAM_PAGE];
-        }
+    /* After a jump that landed between VS.'s InitializeArea and the area's first column, the hook that would have set
+       area.pending ran before the jump. That column is the one at the screen's left edge, where VS.'s parser renders
+       only as an area starts (InitializeArea puts both at the start page; the parser runs ahead of the screen after),
+       so it is taken as the area's start, unless this start is recorded already (a run of these frames before the
+       jump, or run-ahead's) */
+    if (!area.pending && ws_stale && ram[RAM_PAGE] * 16 + (ram[RAM_COLUMN] & 15) == (ram[0x071A] << 4 | ram[0x071C] >> 4) &&
+        !visit_seen())
+        area.pending = true;
+    if (area.pending) {
+        /* a new area: replayed from its start at the next picture (VS. does not always parse an area from
+           its first column: its demo goes on from the title's screen); its first column is the page it began
+           on, also when a rebuild is waiting already */
+        area_start.ok = true;
+        for (int i = 0; i < 5; i++) area_start.id[i] = ram[area_id_addr[i]];
+        area_start.page = ram[RAM_PAGE];
+        area_start.frame = frame_now();
+        area_start.seq = rec_seq++;
+        area_start.epoch = power_epoch;
+        visits[visit_head++ & (N_VISITS - 1)] = area_start;
+        jumped = false;
         area.pending = false;
         area.resync = true;
         return;
     }
+    if (area.resync) return;   /* rebuilt from scratch at the next picture */
+    if (!area.ready || !same_area()) { area.resync = true; return; }   /* not the one built */
     int world = ram[RAM_PAGE] * 16 + (ram[RAM_COLUMN] & 15);
     bool loop = last_world >= 0 && world == last_world + 1 - 64;
     keep_vs_column(loop ? last_world : world - 1);
@@ -1148,6 +1309,14 @@ static void parser_column(void) {
            castles, 32 elsewhere), so what it drew before the loop stays until new strips replace it */
         int step = w[0xBA] == 3 ? 64 : 32, scroll = (((ram[0x071A] << 8) | ram[0x071C]) >> 1) & ~(step - 1);
         area.bg2_seam = (scroll + 256 + 2 * step) & 0x7FFF;
+        if (area.start.ok) {   /* in place of what an earlier run of these frames (run-ahead's, a rewound one) saw from here on */
+            for (int i = 0; i < N_LOOPS_SEEN; i++)
+                if (loops_seen[i].visit == area.start.frame && loops_seen[i].epoch == area.start.epoch &&
+                    loops_seen[i].frame >= frame_now()) loops_seen[i].frame = 0;
+            int i = loops_head++ & (N_LOOPS_SEEN - 1);
+            loops_seen[i].visit = area.start.frame; loops_seen[i].frame = frame_now(); loops_seen[i].seam = area.bg2_seam;
+            loops_seen[i].seq = rec_seq++; loops_seen[i].epoch = area.start.epoch;
+        }
     } else if (last_world >= 0 && world != last_world + 1) {
         /* this column again, or (run-ahead back across a loop) one before the loop: from All-Stars' state
            before it, if it is still kept */
@@ -1164,6 +1333,7 @@ static void parser_column(void) {
     w[RAM_BACKLOAD] = ram[RAM_BACKLOAD]; w[RAM_BB_COLUMN] = ram[RAM_BB_COLUMN];
     if (sb_call(sb, PARSER_CORE, 1, 200000) < 0) return;
     column_parsed(slot, w);
+    area.frame = frame_now();
 }
 
 /* ---- hooks ---- */
@@ -1230,20 +1400,50 @@ static int replay_misses(void) {
    carries state from column to column: both parsers run again, VS.'s in its CPU sandbox and All-Stars'
    here, from the area's start up to the column VS.'s parser renders next, as the game itself did. */
 static void resync(void) {
-    static uint8_t sram[2048], swram[2048], sram0[2048], swram0[2048];
+    static uint8_t sram[2048], swram[2048], sram0[2048], swram0[2048], rr[2048];
     static sbx_t *sb0;
     area.resync = false;
+    if (left_behind.on && !left_behind.rebuilt) { left_behind.rebuilt = true; left_behind.first = ppu.frame; }   /* parser_column records from here on */
+    /* the column VS.'s parser renders next: RAM's, or while a column's tasks run (one a frame, AreaParserTaskNum
+       $071F counting down from 8: AreaParserCore at 7 and 3 left, IncrementColumnPos at 4 and 0) the one after
+       it, whose metatiles its buffer holds (keep_vs_column) */
+    int tasks = ram[0x071F];
+    int target = ram[RAM_PAGE] * 16 + (ram[RAM_COLUMN] & 15) + (tasks != 0 && tasks != 4 ? 1 : 0);
+    /* VS.'s RAM with the numbers of the area on the screen (after a jump they can be the next area's already) */
+    uint8_t ids[5];
+    for (int i = 0; i < 5; i++) ids[i] = ram[area_id_addr[i]];
+    if (jumped) resolve_jump(ids);
+    /* A jump to a moment of the visit built at which VS.'s parser renders the column it renders now (holding
+       rewind standing still, or between two columns), with no castle loop between that moment and the columns
+       held: those are the columns a rebuild gives */
+    bool same_visit = area.start.ok && area_start.ok && area.start.frame == area_start.frame &&
+                      area.start.epoch == area_start.epoch && area.start.page == area_start.page &&
+                      !memcmp(area.start.id, area_start.id, 5);
+    if (area.ready && same_visit && !memcmp(area.id, ids, 5) && same_data() && last_world == target - 1 &&
+        area.have[(target - 1) & 31] && area.world_col[(target - 1) & 31] == target - 1 &&
+        loops_until(&area.start, ppu.frame, NULL) == loops_until(&area.start, area.frame, NULL)) {
+        area.frame = ppu.frame;
+        return;
+    }
     area.ready = false;
     memset(area.parsed, 0, sizeof area.parsed); memset(area.have, 0, sizeof area.have);
     area.last_col = -1;
-    int target = ram[RAM_PAGE] * 16 + (ram[RAM_COLUMN] & 15);
-    memcpy(sram, ram, sizeof sram);
+    memcpy(rr, ram, sizeof rr);
+    for (int i = 0; i < 5; i++) rr[area_id_addr[i]] = ids[i];
+    memcpy(sram, rr, sizeof sram);
     memcpy(swram, cart.wram, sizeof swram);
-    int sp = start_page(ram);
+    int sp = start_page(rr);
     if (sp >= 0) { sram[0x075B] = (uint8_t)sp; sram[0x0752] = 0; }   /* where the area began */
     cpu_t r = cpu;
     r.sp = 0xF0;
+    /* InitializeArea reads the area's data out of CHR ROM through $2007 (GetAreaDataAddrs, $AB94) and counts
+       on the PPU stepping by 1 there, as it does when the game starts an area; between a column's writes
+       (the renderer's, $2000 bit 2) it steps by 32 and the data's end is never found: the sandbox's port
+       starts from the PPU's state with the step of 1 */
+    uint8_t ctrl = ppu.ctrl;
+    ppu.ctrl = (uint8_t)(ctrl & ~0x04);
     mem_sandbox_begin();
+    ppu.ctrl = ctrl;
     if (vs_call(&r, sram, swram, VS_AREA_INIT, 200000) != 0) return;
     /* InitializeArea finds the area from AreaPointer, which the title screen leaves stale (it shows 1-1
        with another area's pointer, so the sandbox would load that area): the area itself comes from VS.'s
@@ -1251,13 +1451,17 @@ static void resync(void) {
        header's settings */
     memcpy(swram, cart.wram, sizeof swram);
     for (uint16_t a = 0xE7; a <= 0xEA; a++) sram[a] = ram[a];
-    sram[RAM_AREA_TYPE] = ram[RAM_AREA_TYPE];
+    for (int i = 0; i < 4; i++) sram[area_id_addr[i]] = ids[i];   /* the type above all: the parser's metatiles */
     sram[RAM_AREA_PTR] = ram[RAM_AREA_PTR];
     uint8_t hv[N_HEADER_VARS];
-    area_header(ram, hv);
+    area_header(rr, hv);
     for (size_t i = 0; i < N_HEADER_VARS; i++) sram[header_vars[i]] = hv[i];
-    build_area(ram);   /* from VS.'s RAM: the area ids, its data pointer and header */
+    build_area(rr);   /* from VS.'s RAM: the area ids, its data pointer and header */
     if (!area.ready) return;
+    area.start = sp >= 0 ? area_start : (visit_t){ 0 };
+    area.frame = ppu.frame;
+    /* past a castle loop of this visit, layer 2 as the latest one before the loaded moment left it */
+    if (area.start.ok) loops_until(&area.start, ppu.frame, &area.bg2_seam);
     int col = sram[RAM_PAGE] * 16 + (sram[RAM_COLUMN] & 15);
     /* less than two pages past a castle loop's new page, the nametables still hold columns from before
        the loop: the replay goes through that loop if its columns then match VS.'s block buffer better */
@@ -1265,7 +1469,7 @@ static void resync(void) {
     bool tried = false;
     for (int y = 0; y < N_LOOPS; y++) {
         int at = cart.prg[VS_LOOP_PAGE - 0x8000 + y] * 16;
-        if (cart.prg[VS_LOOP_WORLD - 0x8000 + y] != ram[RAM_WORLD] || at <= col || target < at - 64 || target >= at - 32) continue;
+        if (cart.prg[VS_LOOP_WORLD - 0x8000 + y] != ids[0] || at <= col || target < at - 64 || target >= at - 32) continue;
         if (!sb0 && !(sb0 = malloc(sizeof *sb0))) break;
         if (!tried) {   /* first the replay without a loop */
             memcpy(sram0, sram, sizeof sram); memcpy(swram0, swram, sizeof swram); memcpy(sb0, sb, sizeof *sb);
@@ -1282,20 +1486,44 @@ static void resync(void) {
         memset(area.parsed, 0, sizeof area.parsed); memset(area.have, 0, sizeof area.have);
     }
     for (int i = 0; i < SNAP_COLS; i++) snap_col[i] = -1;
-    int end = best >= 0 ? replay_loop(&r, sram, swram, col, target, best) : replay(&r, sram, swram, col, target);
+    /* right after VS.'s loop, before its parser renders the loop's new column, the replay stops at the loop:
+       parser_column then takes the loop's step at that column, as it did when the game first looped */
+    int at = best >= 0 ? cart.prg[VS_LOOP_PAGE - 0x8000 + best] * 16 : 0;
+    int end = best < 0 ? replay(&r, sram, swram, col, target)
+            : target == at - 64 ? replay(&r, sram, swram, col, at) : replay_loop(&r, sram, swram, col, target, best);
     if (end < 0) return;
     last_world = end - 1;
 }
 
 void allstars_hook(uint16_t pc) {
     if (!as.rom || !sb_base) return;
-    if (pc == VS_AREA_INIT) { area.pending = true; area.last_col = -1; }
+    if (pc == VS_AREA_INIT) { area.pending = true; area.last_col = -1; ws_stale = false; }
     else if (pc == VS_PARSER_CORE) parser_column();
 }
 
+/* The frontend calls this after every jump of VS.'s machine that is not run-ahead's own return (a state
+   load, a rewind or forward step, Start + Select's rollback): the area is rebuilt from the loaded RAM at the
+   next picture (resync, as the area on the loaded screen: resolve_jump); an area start seen before the jump
+   no longer holds. Run-ahead's short returns are left to parser_column's snapshots. */
 void allstars_reset(void) {
     area.resync = true;
+    area.pending = false;
+    jumped = true;
+    ws_stale = true;
+    left_behind.on = true; left_behind.rebuilt = false; left_behind.frame = ppu.frame; left_behind.seq = rec_seq;   /* see forget_left_behind */
+}
+
+/* The frontend calls this after powering the machine on again (a game started from the launcher, Stop, new DIP
+   switches): VS.'s frames count from 0 once more, a new run (power_epoch). The area starts and castle loops
+   recorded before stay for a state saved in the run before (resolve_jump finds its visit), but a start of this
+   run is never taken for one of that run that had the same frame (visit_seen), nor a loop of one for the other's */
+void allstars_power(void) {
+    power_epoch++;
+    area.pending = false; area.resync = true;
     area_start.ok = false;
+    jumped = false;
+    ws_stale = false;
+    left_behind.on = false;
 }
 
 static void map_sprite_palettes(void);
@@ -1303,6 +1531,11 @@ static void map_sprite_palettes(void);
 void allstars_attach(void) {
     area.ready = false; area.pending = false; area.last_col = -1; area.resync = true;   /* built at the next picture */
     area_start.ok = false;
+    jumped = false;
+    ws_stale = false;
+    left_behind.on = false;
+    memset(visits, 0, sizeof visits);
+    memset(loops_seen, 0, sizeof loops_seen);
     memset(mt_seen_ok, 0, sizeof mt_seen_ok);
     if (as.rom && cart.prg && cart.chr) { map_areas(); map_metatiles(); map_decorations(); map_sprite_palettes(); }
 }
@@ -1695,6 +1928,132 @@ static void write_bg1(void) {
         }
 }
 
+/* The page before a part-way start. An area entered at its halfway page or a pipe's entrance page is
+   parsed from that page on, so left of it the band beside the picture would have no level; the
+   arcade's band draws the page before from a rendering of its own (widescreen.c's make_fill), and the
+   remaster draws it where and when that band does (widescreen_fill_page), for the area it draws (the
+   one built, also in the frames where VS.'s numbers are already the next area's: built_area_shown):
+   All-Stars' parser, in a sandbox of its own set up as build_area sets up the area but a page
+   earlier, parses the page's 16 columns of VS.'s data once per area start, and they are decorated as
+   every column is, with the start page's first columns on their right. In layer 1 they take the
+   slots of the page after the start page until a parser fills one with that page's column: the
+   area's start renders 24 columns, up to 128 pixels past the screen, which leaves the slots of the 8
+   the band shows, and VS.'s parser renders two more only after each 32 pixels of scrolling, when the
+   band has left behind the columns 512 pixels back that share their slots (were one still in the
+   band, it would be black there). The block buffer's cells of those columns are the next page's, so
+   the page is drawn as it was made, as the arcade's band draws its copy of the nametables. */
+static struct {
+    uint32_t gen;                       /* widescreen.c's page it was made for (0: none) */
+    bool     in_visit;                  /* and the visit built then (area.start), when its start was known */
+    uint32_t visit;
+    int      page;                      /* the page parsed: the start page less one */
+    bool     ok;
+    uint8_t  smas[16][13];              /* its columns, decorated */
+} before;
+static sbx_t *sb_before;
+
+/* the 16 columns of page `page` as All-Stars' parser makes them when the area starts there */
+static bool parse_page(int page, uint8_t plain[16][13]) {
+    static uint8_t rr[2048];
+    if (!sb_base || (!sb_before && !(sb_before = malloc(sizeof *sb_before)))) return false;
+    sbx_t *s = sb_before, *keep = sb;
+    uint8_t *w = s->wram;
+    int type = area.id[3] & 3;
+    memcpy(rr, ram, sizeof rr);   /* VS.'s RAM with the numbers of the area built, as resync gives build_area */
+    for (int i = 0; i < 5; i++) rr[area_id_addr[i]] = area.id[i];
+    memcpy(s, sb_base, sizeof *s);
+    sb = s;   /* area_inputs fills the area sandbox's RAM */
+    area_inputs(rr, (uint8_t)((type << 5) | (area.db - rom8(AREA_TYPE_OFS + (uint32_t)type))));
+    sb = keep;
+    w[0x075B] = (uint8_t)page; w[0x0752] = 0;   /* HalfwayPage, not AltEntranceControl */
+    if (sb_call(s, INIT_AREA, 1, 400000) < 0) return false;
+    uint8_t hv[N_HEADER_VARS];
+    area_header(rr, hv);
+    for (size_t i = 0; i < N_HEADER_VARS; i++) w[header_vars[i]] = hv[i];
+    memcpy(&w[AREA_DATA_COPY - 0x7E0000], &sb->wram[AREA_DATA_COPY - 0x7E0000], 1536);   /* VS.'s data as build_area converted it */
+    w[0xFA] = (uint8_t)((AREA_DATA_COPY + 2) & 0xFF);
+    w[0xFB] = (uint8_t)(((AREA_DATA_COPY + 2) >> 8) & 0xFF);
+    w[0xFC] = (uint8_t)((AREA_DATA_COPY + 2) >> 16);
+    for (int k = 0; k < 16; k++) {
+        int col = page * 16 + k;
+        w[RAM_PAGE] = (uint8_t)(col >> 4); w[RAM_COLUMN] = (uint8_t)(col & 15); w[RAM_BB_COLUMN] = (uint8_t)(col & 31);
+        if (sb_call(s, PARSER_CORE, 1, 200000) < 0) return false;
+        memcpy(plain[k], &w[RAM_MT_BUFFER], 13);
+    }
+    return true;
+}
+
+static void build_before(int page, uint32_t gen) {
+    static uint8_t plain[16][13];
+    before.gen = gen;
+    before.in_visit = area.start.ok;
+    before.visit = area.start.seq;
+    before.page = page;
+    before.ok = parse_page(page, plain);
+    if (!before.ok) return;
+    const uint8_t *col[19];   /* the page's columns, then the start page's first three as the area has them */
+    for (int k = 0; k < 16; k++) col[k] = plain[k];
+    for (int k = 0; k < 3; k++) {
+        int c = (page + 1) * 16 + k, s = c & 31;
+        col[16 + k] = area.have[s] && area.world_col[s] == c ? area.plain[s] : NULL;
+    }
+    for (int k = 0; k < 16; k++) {
+        const uint8_t *win[7];
+        for (int j = -3; j <= 3; j++) win[j + 3] = k + j >= 0 && k + j < 19 ? col[k + j] : NULL;
+        decorate(before.smas[k], win, area.id[3] & 3, page * 16 + k);
+    }
+}
+
+/* after a jump (ws_stale), whether the band shows the page before as the visit built says: from its start
+   page on, while none of its castle loops has been seen up to this moment (*start: the start page's world pixel) */
+static bool jump_fill_page(int *start) {
+    if (!widescreen_fill || !area.start.ok || !area.start.page) return false;
+    if (ram[0x071A] * 256 + ram[0x071C] < area.start.page * 256) return false;
+    if (loops_until(&area.start, ppu.frame, NULL)) return false;
+    *start = area.start.page * 256;
+    return true;
+}
+
+/* the page before into layer 1 for the band's world pixels [b0, b1), when the band shows it: returns its
+   start page's world pixel (INT_MIN: the band shows no such page) and in *shown which of its columns
+   the band may show */
+static int write_bg1_before(int b0, int b1, unsigned *shown) {
+    int start;
+    uint32_t gen = 0;
+    *shown = 0;
+    if (ws_stale ? !jump_fill_page(&start) : !widescreen_fill_page(area.id, &start, &gen)) return INT_MIN;
+    if (b0 >= b1 || b0 >= start + 8 || b1 + 8 <= start - 256) return start;   /* not in the band: nothing of it to draw */
+    /* made once per area start, kept across a jump within the visit it was made in */
+    if (ws_stale ? !before.in_visit || before.visit != area.start.seq || before.page != start / 256 - 1 : before.gen != gen)
+        build_before(start / 256 - 1, gen);
+    /* a page that cannot be made: after a jump as in straight play, where widescreen.c could not make it either and
+       says the band shows none */
+    if (!before.ok) return ws_stale ? INT_MIN : start;
+    uint8_t *v = sb->ppu.vram;
+    int front = ram[RAM_PAGE] * 16 + (ram[RAM_COLUMN] & 15);   /* the column VS.'s parser renders now or next */
+    for (int k = 0; k < 16; k++) {
+        int c = before.page * 16 + k, s = c & 31;
+        if (c * 16 + 16 + 8 <= b0 || c * 16 - 8 >= b1) continue;   /* (the lines' scroll differs from the RAM's by up to 8) */
+        /* the slot of a later column VS.'s parser has rendered (not the one it renders now, which is
+           drawn beyond the window, nor one past it, parsed in a timeline the machine has left: a state
+           loaded before the area is rebuilt) */
+        if (area.have[s] && area.world_col[s] != c && area.world_col[s] < front) continue;
+        for (int row = 0; row < 13; row++) {
+            uint16_t w[4];
+            map16(before.smas[k][row], w);
+            int tx = s * 2, ty = (row + 2) * 2;
+            uint32_t base = (uint32_t)((tx >> 5) * 0x400 + ty * 32 + (tx & 31));
+            uint32_t at[4] = { base, base + 32, base + 1, base + 33 };
+            for (int q = 0; q < 4; q++) {
+                uint32_t a = (at[q] & 0x7FFF) * 2;
+                v[a] = (uint8_t)w[q]; v[a + 1] = (uint8_t)(w[q] >> 8);
+            }
+        }
+        *shown |= 1u << k;
+    }
+    return start;
+}
+
 /* layer 2: its pages ($7E2000 + page * $800, 32x32 tiles each) into the 64-column tilemap at $0800
    around the scroll, so the bands beside the picture see the hills too; left of a castle loop's seam
    (area.bg2_seam, for this scroll), what All-Stars drew there before the loop: the layer 512 pixels on */
@@ -1797,6 +2156,7 @@ static void map_sprite_palettes(void) {
 /* what each of VS.'s 64 sprites belongs to, from the RAM its frame was built with */
 enum { OWN_NONE, OWN_PLAYER, OWN_ENEMY, OWN_OTHER, OWN_BLOCK };
 static uint8_t owner[64], owner_slot[64];
+static int owner_player_x;   /* the player's left edge on the picture, from the same RAM */
 
 /* The sprite data offsets ($06E4: the player, the enemies, ...) the frame was built with, from a copy
    of RAM a frame ahead: the engine's SpriteShuffler ($8215) has added SprShuffleAmt[SprShuffleAmtOffset]
@@ -1817,6 +2177,7 @@ static void sprite_owners(const uint8_t *r, int ahead) {
     memset(owner_slot, 0, sizeof owner_slot);
     owner[0] = OWN_NONE;                     /* sprite 0: the status bar split's */
     if (!r) return;
+    owner_player_x = (int16_t)(uint16_t)((r[0x006D] << 8 | r[0x0086]) - (r[0x071A] << 8 | r[0x071C]));
     if (ahead) unshuffle(ofs, r);
     else memcpy(ofs, &r[0x06E4], sizeof ofs);
     int p = ofs[0] >> 2;
@@ -1945,7 +2306,13 @@ static int sprite_shown(const uint8_t *oam, int i, int dx, const uint8_t *real) 
     if (real) {
         const uint8_t *q = &real[i * 4];
         if (!memcmp(o, q, 4)) return 0;
-        /* the player, wrapped round the moved screen's 8-bit X (widescreen.c's draw_sprites) */
+        /* the player's own: only those the real frame hides beside the screen, where his X has not
+           wrapped round the moved screen (widescreen.c's draw_sprites) */
+        if (owner[i] == OWN_PLAYER) {
+            int from = o[3] + dx - owner_player_x;
+            return q[0] >= 0xEF && from >= -128 && from < 128;
+        }
+        /* any other the real frame shows the same way that lands elsewhere has wrapped round too */
         if (q[0] < 0xEF && o[0] == q[0] && o[1] == q[1] && o[2] == q[2] && o[3] + dx != q[3]) return 0;
     }
     return 1;
@@ -1957,7 +2324,8 @@ static int sprite_shown(const uint8_t *oam, int i, int dx, const uint8_t *real) 
    - the star flag over the castle: one 16x16 sprite behind the background ($03:D84C);
    - Bowser: one 32-pixel figure of four 16x16 and two 8x8 sprites for both halves ($05:D055), facing
      and upside down as the head is mirrored, the open mouth (tiles $C9/$CA) as its fire frames, the
-     stepping legs ($CB/$CC) as its walking ones;
+     stepping legs ($CB/$CC) as its walking ones, and while his bridge goes and he falls All-Stars'
+     roar (bowser_roar);
    - Bowser's flame: two overlapping 16x16 sprites, 24x16, and a spark it leaves falling ($05:CD01);
    - Bullet Bills: one 16x16 sprite, the cannon's behind the background as it leaves ($05:CB42);
    - Podoboos: one 16x16 sprite, upside down when falling ($05:EA38);
@@ -2013,6 +2381,62 @@ static void special_objects(const uint8_t *r, const uint8_t *oam, int dx, const 
     }
 }
 
+/* Bowser's roar while his bridge goes. All-Stars' BridgeCollapse sets $014B = 8 and $0F4C = $FF at its first
+   step, the axe's ($03:D53C); its Bowser routine counts $0F4C down once a frame ($05:D189) and while it runs
+   draws the roar's open mouth, frame BOWSER_POSES[BOWSER_ROAR[($0F4C >> 2) & 1]] ($05:D060): 6, then 5, by
+   turns every 4 frames from the picture after that step, through the collapse and his fall until he is gone,
+   facing as he faces ($47,x). It plays no sound of its own (the pieces' $16 only). VS. takes a piece every 4
+   frames (BowserFeetCounter, $0364, from 4 down), so the frames since its first step follow from
+   BridgeCollapseOffset ($0369) and that counter, after the last piece from his fall (bowser_fall). r is RAM a
+   frame ahead of the picture's sprites (VictoryMode runs no GameEngine), as All-Stars' picture shows what its
+   routine drew a frame earlier. The frame, or -1 when he does not roar. */
+#define AS_ROAR_START    0x03D53C   /* BridgeCollapse's first step: LDA #$08 / STA $014B / LDA #$FF / STA $0F4C */
+#define BOWSER_POSES     0x05CF74   /* the frame for each $014B: the walk's six (by $014B / 8), the fire's two, the roar's two */
+#define BOWSER_ROAR      0x05CF7E   /* the roar's two indices into BOWSER_POSES, by bit 2 of $0F4C */
+#define VS_BOX_CTRL      0xE153     /* BoundBoxCtrlData: each bounding box's corners from the object's place */
+
+/* the frames since Bowser's last piece went, as of r: MoveEnemySlowVert ($BE9B) adds $0F a frame to his move
+   force, carried into his speed, from InitVStf's 0, and holds the speed at 2 (the force back to 0 each time it
+   passes $80, $BF17). Until then the two count the frames; after it how far he has fallen does, from the height
+   the bridge held him at, which his bounding box keeps: ProcessBowserHalf ($D0FF) works it out only while his
+   state is 0, the last time on the frame before the last piece. His fraction of a pixel there is unknown, but a
+   frame at the held speed moves him two pixels. */
+static int bowser_fall(const uint8_t *r, int e) {
+    int v = r[0xA0 + e] << 8 | r[0x0434 + e];
+    if (v % 15 == 0 && v < 0x280) return v / 15;
+    if (v < 0x200 || v >= 0x280 || (v - 0x200) % 15) return -1;
+    int ctrl = r[0x049A + e], top = r[0x04B1 + 4 * e];   /* Enemy_BoundBoxCtrl, the box's top */
+    if (ctrl < 12 && top != 0xFF) {
+        long fallen = ((long)r[0xB6 + e] << 16 | (long)r[0xCF + e] << 8 | r[0x0417 + e])
+                    - (1L << 16 | (long)(uint8_t)(top - cart.prg[VS_BOX_CTRL + 1 + ctrl * 4 - 0x8000]) << 8);
+        long d = 0;
+        for (int n = 0, w = 0; n < 256; n++) {
+            if (w == v && fallen >= d && fallen - d < 256) return n;
+            d += w;
+            if ((w += 15) >= 0x280) w = 0x200;
+        }
+    }
+    return 43 + (v - 0x200) / 15;   /* no height to go by: the first round at the held speed */
+}
+
+static int bowser_roar(const uint8_t *r) {
+    int e = r[0x0368], k = r[0x0369], t;   /* BowserFront_Offset, BridgeCollapseOffset */
+    /* VictoryMode (VS.'s OperMode 3) in its first task, BridgeCollapse ($CF2F), with Bowser in his slot */
+    if (r[0x0770] != 3 || r[0x0772] != 0 || e >= 6 || r[0x16 + e] != 0x2D || k < 1 || k > N_BRIDGE_CELLS) return -1;
+    if (rom8(AS_ROAR_START) != 0xA9 || rom8(AS_ROAR_START + 1) != 0x08) return -1;
+    if (k < N_BRIDGE_CELLS) {
+        if (r[0x1E + e] || r[0x0364] < 1 || r[0x0364] > 4) return -1;
+        t = (k - 1) * 4 + 4 - r[0x0364];
+    } else {
+        int n = r[0x1E + e] & 0x40 ? bowser_fall(r, e) : -1;   /* falling: his state $40 since the last piece */
+        if (n < 0) return -1;
+        t = (N_BRIDGE_CELLS - 1) * 4 + n;
+    }
+    int c = 0xFF - (t - 1);   /* $0F4C as All-Stars' routine drew the picture's frame */
+    if (t < 1 || c <= 0) return -1;
+    return rom8(BOWSER_POSES + rom8(BOWSER_ROAR + (uint32_t)((c >> 2) & 1)));
+}
+
 static void draw_bowser(snesppu_t *p, const uint8_t *r, struct special sp[6]) {
     int front = r[0x0368] < 6 && (r[0x16 + r[0x0368]] & 0x3F) == 0x2D ? r[0x0368] : -1, rear = -1;
     for (int e = 0; e < 6; e++)
@@ -2026,7 +2450,8 @@ static void draw_bowser(snesppu_t *p, const uint8_t *r, struct special sp[6]) {
     else { x0 = left ? b->x - 16 : b->x; y0 = b->y - 8; }
     int upside = f->seen ? f->vf : b->vf;
     uint8_t fc = r[0x09];
-    int frame = f->mouth ? 5 + ((fc >> 2) & 1) : (b && b->legs) ? ((fc & 0x20) ? 2 : 1) : 0;
+    int frame = bowser_roar(r);
+    if (frame < 0) frame = f->mouth ? 5 + ((fc >> 2) & 1) : (b && b->legs) ? ((fc & 0x20) ? 2 : 1) : 0;
     static const int8_t px[6] = { 0, 0, 8, 16, 16, 16 }, py[6] = { 0, 16, -8, 0, 16, -8 }, py_up[6] = { 8, -8, 24, 8, -8, 24 };
     for (int j = 0; j < 6; j++) {
         uint16_t t = (uint16_t)(0x100 | rom8(BOWSER_TILES + (uint32_t)((left ? 42 : 0) + frame * 6 + j)));
@@ -2094,7 +2519,7 @@ static struct {
 static void retainer_step(const uint8_t *r, int e) {
     uint8_t *w = sb_end->wram;
     int cam = (r[0x071A] << 8) | r[0x071C];
-    int x = ((r[0x6E + e] << 8) | r[0x87 + e]) + 14 + (r[0x075F] == 2 ? 16 : 0);
+    int x = ((r[0x6E + e] << 8) | r[0x87 + e]) + 14 + (area.id[0] == 2 ? 16 : 0);
     int steps = (uint8_t)(r[0x09] - cend.fc);
     cend.fc = r[0x09];
     for (int k = steps - 1; k >= 0; k--) {
@@ -2103,7 +2528,7 @@ static void retainer_step(const uint8_t *r, int e) {
         w[0x42] = (uint8_t)cam; w[0x43] = (uint8_t)(cam >> 8);
         w[0x021A] = (uint8_t)x; w[0x79] = (uint8_t)(x >> 8);    /* its object 0 */
         w[0x03AE] = (uint8_t)(x - cam);
-        w[0x075F] = r[0x075F]; w[0x0753] = r[0x0753];
+        w[0x075F] = area.id[0]; w[0x0753] = r[0x0753];
         w[0x9E] = 0;
         if (!w[0x0F7E] && r[0x0772] >= 3 && ++w[0x0F7F] == 0x70) { w[0x0F7E] = 1; w[0x0F7F] = 0; }
         for (int i = 0; i < 128; i++) { w[0x0801 + i * 4] = 0xF0; w[0x0C00 + i * 4] = 0; }
@@ -2134,8 +2559,10 @@ static void retainer_step(const uint8_t *r, int e) {
 }
 
 static void draw_retainer(snesppu_t *p, const uint8_t *r, int e, int x, int y) {
-    int w8 = r[0x075F] == 7;
-    int level = (r[0x075F] << 8) | r[0x075C];
+    /* the castle's world and level (the area built): at the world's end VS. moves its numbers on to the next
+       world a frame or two before the screen goes black */
+    int w8 = area.id[0] == 7;
+    int level = (area.id[0] << 8) | area.id[1];
     if (!cend.live || cend.level != level || ppu.frame - cend.frame > 600) {   /* the scene starts */
         if (!sb_end && !(sb_end = malloc(sizeof *sb_end))) return;
         memcpy(sb_end, sb, sizeof *sb);
@@ -2143,7 +2570,7 @@ static void draw_retainer(snesppu_t *p, const uint8_t *r, int e, int x, int y) {
         w[0x0F7D] = w[0x0F7E] = w[0x0F7F] = w[0x0B9C] = w[0x0B76] = 0;
         w[0x10] = 1; w[0x1C] = 0x35; w[0x29] = 0; w[0xBC] = 1;   /* its object 0: Toad */
         w[0x0238] = r[0xCF + e];                                  /* his height, All-Stars' own from now on */
-        uint32_t a = RETAINER_GFX + (w8 ? 0x1000u : 0), b = 0x1E0000u | rom16(RETAINER_SETS + r[0x075F] * 2u);
+        uint32_t a = RETAINER_GFX + (w8 ? 0x1000u : 0), b = 0x1E0000u | rom16(RETAINER_SETS + area.id[0] * 2u);
         for (uint32_t i = 0; i < 0x800; i++) { cend.vram[i] = rom8(a + i); cend.vram[0x800 + i] = rom8(b + i); }
         cend.live = 1;
         cend.level = level;
@@ -2823,19 +3250,23 @@ static int render_text_screen(uint32_t *out, int stride, int x, int y, int w, in
 
 int allstars_render(uint32_t *out, int stride, int x, int y, int w, int h) {
     if (!allstars_enabled || !as.rom) return 0;
+    forget_left_behind();
     if (!(ppu.line_emph[120] & 0x18)) return 0;   /* the screen is off (for the picture's lines, not just at its end) */
     if (ram[0x0770] == 2 && !widescreen_level_window(&(int){0}, &(int){0}) && (nt_has(9, "WORLD") || nt_has(10, "WORLD") || nt_has(11, "WORLD") || nt_has(12, "WORLD")))
         return render_intermission(out, stride, x, y, w, h);
     int lo, hi;
     if (!widescreen_level_window(&lo, &hi)) return render_text_screen(out, stride, x, y, w, h);
     if (area.resync || (!area.ready && !area.pending)) resync();
-    if (!area.ready || !same_area()) return 0;
+    if (!area.ready || !built_area_shown()) return 0;
+    /* after a jump, black before the area's start but after a castle loop by the visit's loops seen up to this
+       moment, not by widescreen.c's flag (see ws_stale) */
+    if (ws_stale && area.start.ok) widescreen_level_window_loop(&lo, &hi, loops_until(&area.start, ppu.frame, NULL) > 0);
     keep_vs_column(last_world);
     animate_tiles(ram[0x09]);
     write_hud();
     int cam = camera_x();
     area.bg2_scroll = (uint16_t)(cam >> 1);
-    int type = ram[RAM_AREA_TYPE] & 3;
+    int type = area.id[3] & 3;   /* the area on the screen's (RAM's can be the next one's already) */
     area.bg3_scroll = (uint16_t)(type == 1 ? cam >> 2 : cam);   /* the clouds far behind; the waves with the level */
     /* All-Stars' IRQ ($03:850D) at its line $0EF2: by day it scrolls layer 3 below the status bar; at
        night ($0ED1, $04:95CE: line $AF) layer 2 is split there instead: its NMI gives the layer the
@@ -2843,6 +3274,8 @@ int allstars_render(uint32_t *out, int stride, int x, int y, int w, int h) {
     uint8_t irq_line = sb->wram[0x0EF2];
     bool irq = sb->wram[0x0EDE] != 0, starry = sb->wram[0x0ED1] != 0;
     write_bg1();
+    unsigned bshow = 0;   /* the page before a part-way start, beside the picture: which of its columns are drawn */
+    int bstart = x < 0 ? write_bg1_before(cam + x, cam + (x + w < 0 ? x + w : 0), &bshow) : INT_MIN;
     if (starry) {
         int split = (irq_line + 1 + sb->ppu.vofs[1]) >> 3;   /* the first tile row below the split */
         if (split < 0) split = 0;
@@ -2877,7 +3310,9 @@ int allstars_render(uint32_t *out, int stride, int x, int y, int w, int h) {
         uint8_t band[256];
         int dx;
         if (!widescreen_band_oam(side, band, &dx)) continue;
-        build_sprites(&p, shown, ahead, 0, band, dx, ppu.oam);
+        /* the band's OAM is that copy's own engine run, built with its sprite data offsets as they are, also
+           when the copy is a frame ahead of the picture's sprites (unshuffle is for the PPU's OAM) */
+        build_sprites(&p, shown, 0, 0, band, dx, ppu.oam);
         memcpy(lists[side * 2], p.spr, sizeof(snes_sprite_t) * (size_t)p.nspr); counts[side * 2] = p.nspr;
     }
     /* each part replays the frame's registers from its first line */
@@ -2910,8 +3345,18 @@ int allstars_render(uint32_t *out, int stride, int x, int y, int w, int h) {
             uint32_t *row = out + (size_t)(line - y) * (size_t)stride;
             snesppu_line(&p, line, x0, x1 - x0, row + (x0 - x));
             /* beyond the level the game holds (before the area's start, past its rendering): black, as
-               the arcade's widescreen canvas */
-            for (int px = x0; px < x1; px++) if (px < lo || px >= hi) row[px - x] = 0xFF000000u;
+               the arcade's widescreen canvas; in the left band before a part-way start, the page before
+               where it is drawn (a line's world position as the arcade's band takes it: its scroll, the
+               status bar's the RAM's) */
+            int d = (sx - cam) & 511;
+            if (d > 256) d -= 512;
+            int wl = cam + (d >= -8 && d <= 8 ? d : 0);
+            for (int px = x0; px < x1; px++) {
+                int wx = wl + px;
+                if (px < 0 && wx < bstart) {
+                    if (wx < bstart - 256 || !((bshow >> ((wx - (bstart - 256)) >> 4)) & 1)) row[px - x] = 0xFF000000u;
+                } else if (px < lo || px >= hi) row[px - x] = 0xFF000000u;
+            }
         }
     }
     return 1;

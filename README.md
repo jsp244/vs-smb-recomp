@@ -135,7 +135,8 @@ death, or from a pipe) is drawn by the game from that page on, so the columns le
 the screen were never rendered. The port draws that page the way the game draws an
 area: InitializeArea, from a copy of RAM made as the area starts, runs again in the
 sandbox told to start a page earlier, and the area parser renders the page into a
-copy of the nametables, which the left band reads.
+copy of the nametables, which the left band reads. With the remastered graphics,
+All-Stars' own parser renders that page the same way.
 
 **Walking into the left band.** The game stops Mario at the left edge of its 256-pixel
 screen, even where a widescreen view shows the level further left. The port lets him
@@ -185,7 +186,11 @@ Verified (headless harness with scripted input and RAM pokes, screenshots inspec
   builds exactly the sprites the PPU shows in all 62,688 frames of play across the 40
   level runs (`--ws-oam-check`); the picture between the 8-pixel edge columns is
   unchanged; seams checked at both edges (Goombas, Koopas, Buzzy Beetles, a Blooper,
-  Piranha Plants); the page before a halfway respawn drawn into the left band
+  Piranha Plants); the page before a halfway respawn drawn into the left band; Mario
+  drawn once (the re-run makes his bounding box with the real camera and every other
+  object's with the moved one, so it had put a second Mario in a band while he rode a
+  lift, beside an enemy and on an area's first frame: those went, and nothing else changed
+  in 151,098 frames of 52 sessions)
 * walking into the left band (`tests/cosim.py --walk N`, N = 42, 64, 104): in and back,
   a Goomba's hit and a stomp there, the wall at an area's start, standing on the drawn
   page before a halfway restart; bit-identical between both paths with the patches working, the band's
@@ -200,8 +205,18 @@ Verified (headless harness with scripted input and RAM pokes, screenshots inspec
   Hammer Bro stages; the title with its banner and the demo scrolling it away, the
   PUSH BUTTON, intermission, game-over and continue screens; 16:9 with the objects
   beside the picture, the walk into the left band and, under water, the tint and the
-  gradient carried on into the bands; 8-4's lift along the lava in front of it, as in
-  the arcade (a falling lift sinks in, as in All-Stars); the intermission compared with
+  gradient carried on into the bands; after a halfway restart or a pipe, the page before
+  the start in the left band, parsed by All-Stars' parser, where and when the arcade's
+  band draws its own (132 part-way starts: black only where the arcade's band is black,
+  nothing else changed), also after a rewind or a load; the warp zone's pipes in
+  All-Stars' art down to the black screen, as All-Stars draws them, and with them the
+  frames at a level's or a world's end and a two-player handover that showed the arcade
+  picture; after a state load, a rewind or fast-forward step and the Start + Select
+  rollback the area of the loaded moment rebuilt (96 jump tests over 19 scenes and loads
+  every frame through area starts and castle loops: the level as in the straight run, no
+  arcade picture), holding rewind costing about what drawing does; 8-4's lift along the
+  lava in front of it, as in the arcade (a falling lift sinks in, as in All-Stars); the
+  intermission compared with
   All-Stars' own (run in a reference emulator), the castles' with Bowser breathing fire
   in its picture; the night sky's clouds and the floating score numbers as All-Stars
   draws them; the castle loops of 5-4, 7-4 and 8-4, where the blocks, the background
@@ -217,7 +232,9 @@ Verified (headless harness with scripted input and RAM pokes, screenshots inspec
   spawned) and compared with All-Stars in the reference emulator: the goal flag, the
   castle's star flag and fireworks, Bowser walking, breathing fire and falling upside
   down, the bridge taken away under him after the axe in all eight castles (each piece
-  on the arcade's frame, All-Stars' rubble sprite for sprite), his flame, the castle's
+  on the arcade's frame, All-Stars' rubble sprite for sprite), his roar from the bridge's
+  first piece through his fall (All-Stars' frames 6 and 5 by turns, frame for frame with
+  All-Stars in 1-4, 6-4 and 8-4, facing either way), his flame, the castle's
   end with Toad's sack (1-4) and the princess (8-4),
   Podoboos, Bullet Bills, shells still and kicked, a vine, the cloud lift, springboards,
   Bloopers, Cheep-cheeps, Hammer Bros, Lakitu and Spinies, defeated enemies falling upside

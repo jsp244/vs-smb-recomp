@@ -46,6 +46,10 @@ const uint8_t *widescreen_shown_ram(int *ahead);
 /* The picture's columns [lo, hi) that show the level this frame (beyond 0..256 in the bands); 0 when
    the frame is not a level (a text screen, the intermission). */
 int widescreen_level_window(int *lo, int *hi);
+/* The same with the castle loop state given (loop: the area's parser has gone through a castle loop since
+   the area began, so the columns before its start are the loop's own), for a renderer that follows the
+   machine's jumps: they leave this module's own record of the loop as the frames it last ran had it. */
+int widescreen_level_window_loop(int *lo, int *hi, int loop);
 
 /* The sprites the game builds beside the picture, for other renderers (the remastered graphics): the
    64 OAM entries of the frame's engine run with the camera moved to the left (side 0) or right (side 1),
@@ -62,6 +66,17 @@ extern int widescreen_walk;
 /* How many pixels left of the screen's edge the band shows the level now (0 = none), from RAM and
    the page drawn before a part-way start only, so that every run of a frame gets the same answer. */
 int widescreen_level_left(void);
+
+/* The page drawn before an area's start page, for other renderers (the remastered graphics): 1 when
+   the band shows it this frame as widescreen_render does (the area entered part-way is the one on
+   screen, the screen at or past its start page, no castle loop since, widescreen_fill), with *start
+   the world pixel of the start page (the page drawn is the 256 pixels before it) and *gen a number
+   that is new each time an area starts; 0 otherwise (also when the area started at its first page:
+   nothing comes before it). ids are the numbers of the area the renderer shows (world, level, area
+   number, type, data offset: $075F, $075C, $0760, $074E, $074F), which can be the old area's while
+   RAM's are the next one's already (a warp zone's pipe, a level's end); NULL: RAM's, as
+   widescreen_render takes them. */
+int widescreen_fill_page(const uint8_t ids[5], int *start, uint32_t *gen);
 
 /* As an area starts part-way from start_page (InitializeArea, bandwalk.c): writes the collision of the
    page before it, as the band draws it, into the game's block buffer where the player can reach it.
