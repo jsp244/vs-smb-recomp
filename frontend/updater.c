@@ -1001,12 +1001,12 @@ static int SDLCALL install_worker(void *arg) {
     if (!install(why, sizeof why))
         set_state(UPD_FAILED, "Version %s was not installed: %s.", latest, why);
 #ifndef __ANDROID__
-    else {
-        char kept[200] = "";
-        if (g_kept_old) snprintf(kept, sizeof kept, " The previous version is kept as %s.old.", g_exe[0] ? name_in(g_exe) : BINARY);
-        set_state(UPD_INSTALLED, "Version %s is installed. Restart now to use it (a game in progress ends), or it starts the next "
-                  "time you open the game.%s", latest, kept);
-    }
+#  define INSTALLED "Version %s is installed. Restart now to use it (a game in progress ends), or it starts the next time you open the game."
+    else if (g_kept_old)
+        set_state(UPD_INSTALLED, INSTALLED " The previous version is kept as %s.old.", latest, g_exe[0] ? name_in(g_exe) : BINARY);
+    else
+        set_state(UPD_INSTALLED, INSTALLED, latest);
+#  undef INSTALLED
 #endif
     return 0;
 }
