@@ -149,13 +149,15 @@ $(BUILD)/fe_resources.o: frontend/vssmb.rc frontend/vssmb.ico
 	@mkdir -p $(BUILD)
 	$(WINDRES) -I frontend $< -O coff -o $@
 
-# ---- distributable package: the executable plus the player notes ----
+# ---- distributable package: the executable plus the player notes (the in-app update writes the
+#      notes too: frontend/updater.c's doc_names), and in the Deck edition add-to-steam.py, made
+#      executable here (git stores it as 100644, and cp keeps that) ----
 dist: $(BUILD)/vssmb$(EXE)
 	rm -rf dist/vssmb && mkdir -p dist/vssmb
 	cp $(BUILD)/vssmb$(EXE) dist/vssmb/
 	cp docs/PLAYERS.md dist/vssmb/README.txt
 	@test "$(DECK_EDITION)" != 1 || cp docs/STEAMDECK.md dist/vssmb/STEAMDECK.txt
-	@test "$(DECK_EDITION)" != 1 || cp tools/steamdeck/add-to-steam.py dist/vssmb/
+	@test "$(DECK_EDITION)" != 1 || { cp tools/steamdeck/add-to-steam.py dist/vssmb/ && chmod 755 dist/vssmb/add-to-steam.py; }
 	@test "$(WINDOWS)" = 1 || cp frontend/icon_preview.png dist/vssmb/vssmb.png
 	$(PYTHON) -c "import shutil; shutil.make_archive('dist/vssmb-$(PLATFORM)', '$(ARCHIVE)', 'dist', 'vssmb')"
 	@echo "package: dist/vssmb-$(PLATFORM).$(if $(filter zip,$(ARCHIVE)),zip,tar.gz)"
