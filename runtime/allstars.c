@@ -2299,13 +2299,17 @@ static void add_sprite(snesppu_t *p, int x, int y, uint16_t tile, int large, int
 }
 
 /* the arcade's sprite at OAM entry i of oam, if it is drawn: one of the picture's, or (with real, the
-   PPU's own OAM) one the game built beside the picture that the picture does not have */
-static int sprite_shown(const uint8_t *oam, int i, int dx, const uint8_t *real) {
+   PPU's own OAM) one the game built beside the picture that the picture does not have. With hidden, only
+   those of the latter that reach the picture's edge columns where the real frame hides them (an object
+   straddling the edge, the player walking into the left band): drawn into the picture behind its own
+   sprites, as the arcade's canvas draws them into its 8 edge columns (widescreen.c's draw_sprites) */
+static int sprite_shown(const uint8_t *oam, int i, int dx, const uint8_t *real, int hidden) {
     const uint8_t *o = &oam[i * 4];
     if (owner[i] == OWN_NONE || o[0] >= 0xEF) return 0;
     if (real) {
         const uint8_t *q = &real[i * 4];
         if (!memcmp(o, q, 4)) return 0;
+        if (hidden && (q[0] < 0xEF || (dx < 0 ? o[3] + dx >= 8 : o[3] + dx <= 240))) return 0;
         /* the player's own: only those the real frame hides beside the screen, where his X has not
            wrapped round the moved screen (widescreen.c's draw_sprites) */
         if (owner[i] == OWN_PLAYER) {
@@ -2361,11 +2365,13 @@ static int special_kind(const uint8_t *r, int e, int k, uint8_t tile, int *ox, i
     return SP_NONE;
 }
 
-static void special_objects(const uint8_t *r, const uint8_t *oam, int dx, const uint8_t *real, struct special sp[6]) {
+/* the places of the special objects, from their arcade sprites but not the points floating up in them */
+static void special_objects(const uint8_t *r, const uint8_t *oam, int dx, const uint8_t *real, int hidden,
+                            const int8_t floatey[64], struct special sp[6]) {
     memset(sp, 0, sizeof(struct special) * 6);
     if (!r) return;
     for (int i = 0; i < 64; i++) {
-        if (owner[i] != OWN_ENEMY || !sprite_shown(oam, i, dx, real)) continue;
+        if (owner[i] != OWN_ENEMY || floatey[i] >= 0 || !sprite_shown(oam, i, dx, real, hidden)) continue;
         const uint8_t *o = &oam[i * 4];
         int e = owner_slot[i] & 15, ox, oy, kind = special_kind(r, e, owner_slot[i] >> 4, o[1], &ox, &oy);
         if (kind == SP_NONE) continue;
@@ -2659,15 +2665,53 @@ static void draw_special(snesppu_t *p, const uint8_t *r, int e, const struct spe
     }
 }
 
-static void build_sprites(snesppu_t *p, const uint8_t *r, int ahead, int screen, const uint8_t *oam, int dx, const uint8_t *real) {
+/* The points that float up (FloateyNumbersRoutine, $86E1): two sprites side by side with the tiles of
+   FloateyNumTileData ($867D) for a slot's FloateyNum_Control ($0110), in the first two of the scored enemy's
+   own sprites once it is defeated (state 2 or more: a stomped or kicked shell, a Bullet Bill), else in a
+   block object's (Alt_SprDataOffset). r is RAM from before the frame's GameEngine, which sets a control
+   during the frame (the stomp, the kick), so a pair at the start of an enemy's or a block's sprites counts
+   by its tiles alone. All-Stars draws them from its own table ($03:8B0C) in palette 1 at priority 3, the
+   "000" of 1000-8000 one 16x16 sprite of its second table ($03:8BD5). -1 for a sprite that is not points. */
+static void floatey_marks(const uint8_t *r, const uint8_t *oam, int8_t floatey[64]) {
+    memset(floatey, -1, 64);
+    if (!r) return;
+    for (int i = 0; i + 1 < 64; i++) {
+        const uint8_t *a = &oam[i * 4], *b = &oam[(i + 1) * 4];
+        if (floatey[i] >= 0 || a[0] != b[0] || (uint8_t)(a[3] + 8) != b[3]) continue;
+        int first = (owner[i] == OWN_ENEMY || owner[i] == OWN_BLOCK) && !(owner_slot[i] >> 4);
+        for (int c = 1; c <= 0x0B; c++) {
+            if (a[1] != cart.prg[VS_FLOATEY - 0x8000 + c * 2] || b[1] != cart.prg[VS_FLOATEY + 1 - 0x8000 + c * 2]) continue;
+            int set = first;
+            for (int f = 0; f < 7 && !set; f++) set = r[0x0110 + f] == c;
+            if (set) { floatey[i] = (int8_t)(c * 2); floatey[i + 1] = (int8_t)(c * 2 + 1); }
+            break;
+        }
+    }
+}
+
+/* the special objects the picture drew this frame, by enemy slot (their kind): the band's sprites drawn into
+   the picture's edge (hidden) leave them out, Bowser's halves and the vine's pieces being one figure each */
+static uint8_t picture_kind[6];
+static int drawn_in_picture(int e, int kind) {
+    for (int k = 0; k < 6; k++)
+        if (k == e ? picture_kind[k] != SP_NONE : (kind == SP_BOWSER || kind == SP_VINE) && picture_kind[k] == kind) return 1;
+    return 0;
+}
+
+static void build_sprites(snesppu_t *p, const uint8_t *r, int ahead, int screen, const uint8_t *oam, int dx,
+                          const uint8_t *real, int hidden) {
     p->nspr = 0;
-    int screen_pose = -1;
+    int screen_pose = -1, picture = !real && !screen;
     if (screen) screen_pose = screen_owners();
     else sprite_owners(r, ahead);
+    if (picture) memset(picture_kind, SP_NONE, sizeof picture_kind);
     player_tiles(p, r, screen_pose);
     player_colors(p, r ? r : ram);
+    int8_t floatey[64];
+    if (screen) memset(floatey, -1, sizeof floatey);
+    else floatey_marks(r, oam, floatey);
     struct special spc[6];
-    special_objects(screen ? NULL : r, oam, dx, real, spc);
+    special_objects(screen ? NULL : r, oam, dx, real, hidden, floatey, spc);
     /* the player's mirroring, from its first sprite: the NES's ChkForPlayerAttrib mirrors only the second
        of the third and fourth rows' tiles in its standing, crouching, growing and dying poses, which
        All-Stars draws whole */
@@ -2681,27 +2725,10 @@ static void build_sprites(snesppu_t *p, const uint8_t *r, int ahead, int screen,
         if (owner[i] == OWN_OTHER)
             for (int j = 0; j < 64; j++)
                 if ((owner[j] == OWN_ENEMY || owner[j] == OWN_PLAYER) && !memcmp(&oam[i * 4], &oam[j * 4], 4)) { stale[i] = 1; break; }
-    /* the points that float up (FloateyNumbersRoutine, $86E1): two sprites side by side with the tiles of
-       FloateyNumTileData ($867D) for a slot's FloateyNum_Control ($0110), in the scored object's sprites or
-       a block object's. All-Stars draws them from its own table ($03:8B0C) in palette 1 at priority 3, the
-       "000" of 1000-8000 one 16x16 sprite of its second table ($03:8BD5) */
-    int8_t floatey[64];
-    memset(floatey, -1, sizeof floatey);
-    for (int f = 0; f < 7 && r && !screen; f++) {
-        uint8_t c = r[0x0110 + f];
-        if (!c || c > 0x0B) continue;
-        uint8_t lt = cart.prg[VS_FLOATEY - 0x8000 + c * 2], rt = cart.prg[VS_FLOATEY + 1 - 0x8000 + c * 2];
-        for (int i = 0; i + 1 < 64; i++) {
-            const uint8_t *a = &oam[i * 4], *b = &oam[(i + 1) * 4];
-            if (a[1] == lt && b[1] == rt && a[0] == b[0] && (uint8_t)(a[3] + 8) == b[3] && floatey[i] < 0) {
-                floatey[i] = (int8_t)(c * 2); floatey[i + 1] = (int8_t)(c * 2 + 1);
-            }
-        }
-    }
     int bowser_done = 0, vine_done = 0;
     for (int i = 0; i < 64; i++) {
         const uint8_t *o = &oam[i * 4];
-        if (stale[i] || !sprite_shown(oam, i, dx, real)) continue;
+        if (stale[i] || !sprite_shown(oam, i, dx, real, hidden)) continue;
         if (p->nspr + 12 > (int)(sizeof p->spr / sizeof p->spr[0])) break;
         uint8_t nattr = o[2], tile = o[1];
         if (floatey[i] >= 0) {
@@ -2713,6 +2740,8 @@ static void build_sprites(snesppu_t *p, const uint8_t *r, int ahead, int screen,
         }
         if (owner[i] == OWN_ENEMY && r && !screen) {
             int e = owner_slot[i] & 15, ox, oy, kind = special_kind(r, e, owner_slot[i] >> 4, tile, &ox, &oy);
+            if (kind != SP_NONE && picture) picture_kind[e] = (uint8_t)kind;
+            if (kind != SP_NONE && hidden && drawn_in_picture(e, kind)) continue;
             if (kind == SP_BOWSER) {
                 if (!bowser_done) { bowser_done = 1; draw_bowser(p, r, spc); }
                 continue;
@@ -2777,7 +2806,7 @@ static void build_sprites(snesppu_t *p, const uint8_t *r, int ahead, int screen,
         s->attr = (uint8_t)((vf << 7) | (hf << 6) | (prio << 4) | (sp << 1));
         p->nspr++;
     }
-    if (r && !screen) bridge_rubble(p);
+    if (r && !screen && !hidden) bridge_rubble(p);
 }
 
 /* ---- the status bar ---- */
@@ -3242,7 +3271,7 @@ static int render_text_screen(uint32_t *out, int stride, int x, int y, int w, in
         }
     screen_icons(&p, nt);
     for (int b = 0; b < 4; b++) { p.hofs[b] = 0; p.vofs[b] = 0; }
-    build_sprites(&p, ram, 0, 1, ppu.oam, 0, NULL);
+    build_sprites(&p, ram, 0, 1, ppu.oam, 0, NULL, 0);
     for (int line = y; line < y + h && line < 240; line++)
         screen_line(&p, line, x, w, out + (size_t)(line - y) * (size_t)stride);
     return 1;
@@ -3303,7 +3332,7 @@ int allstars_render(uint32_t *out, int stride, int x, int y, int w, int h) {
     /* the sprites of the picture, and beside it those the game builds there (widescreen) */
     static snes_sprite_t lists[3][128 + 64];
     int counts[3] = { 0, 0, 0 };
-    build_sprites(&p, shown, ahead, 0, ppu.oam, 0, NULL);
+    build_sprites(&p, shown, ahead, 0, ppu.oam, 0, NULL, 0);
     memcpy(lists[1], p.spr, sizeof(snes_sprite_t) * (size_t)p.nspr); counts[1] = p.nspr;
     for (int side = 0; side < 2; side++) {
         if (side ? x + w <= 256 : x >= 0) continue;
@@ -3312,8 +3341,14 @@ int allstars_render(uint32_t *out, int stride, int x, int y, int w, int h) {
         if (!widescreen_band_oam(side, band, &dx)) continue;
         /* the band's OAM is that copy's own engine run, built with its sprite data offsets as they are, also
            when the copy is a frame ahead of the picture's sprites (unshuffle is for the PPU's OAM) */
-        build_sprites(&p, shown, 0, 0, band, dx, ppu.oam);
+        build_sprites(&p, shown, 0, 0, band, dx, ppu.oam, 0);
         memcpy(lists[side * 2], p.spr, sizeof(snes_sprite_t) * (size_t)p.nspr); counts[side * 2] = p.nspr;
+        /* and into the picture, behind its own sprites, those of the band's that the game hides at the
+           picture's edge, so that an object (the player too) crossing it stays whole */
+        build_sprites(&p, shown, 0, 0, band, dx, ppu.oam, 1);
+        int n = p.nspr, room = (int)(sizeof lists[1] / sizeof lists[1][0]) - counts[1];
+        if (n > room) n = room;
+        memcpy(lists[1] + counts[1], p.spr, sizeof(snes_sprite_t) * (size_t)n); counts[1] += n;
     }
     /* each part replays the frame's registers from its first line */
     static uint8_t regs[offsetof(snesppu_t, spr) - offsetof(snesppu_t, inidisp)];

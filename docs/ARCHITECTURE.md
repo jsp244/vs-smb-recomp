@@ -464,7 +464,12 @@ as those routines do, placed from any of the object's arcade sprites: the goal f
 the castle's star flag, Bowser (one figure for both halves), his flame and its sparks,
 Bullet Bills, Podoboos, shells still and kicked, the vine, the coin heavens' cloud
 lift and fireworks; the floating score numbers are All-Stars' two tiles for each value
-($03:8B0C: an 8x8 digit and a 16x16 half for 1,000 and up, in front of everything). At a castle's end All-Stars' own retainer code runs in a copy of
+($03:8B0C: an 8x8 digit and a 16x16 half for 1,000 and up, in front of everything).
+VS. draws a defeated enemy's points in the first two of its own sprites
+(FloateyNumbersRoutine, $86E1), so a pair of score tiles there is taken for points by its
+tiles, also on the frame that sets them, which the copy of RAM from before GameEngine
+does not know, and never gives the object's place: a stomped or kicked shell stays on the
+ground under its points instead of following them up. At a castle's end All-Stars' own retainer code runs in a copy of
 the area's sandbox once a frame (Toad tied up in a sack that wobbles, then its scene
 for each world), with VS.'s Toad, camera and frame counter, and its sprites are drawn;
 the princess stands as All-Stars draws her. VictoryMode runs no GameEngine, so there
@@ -476,7 +481,11 @@ columns below the surface). In the widescreen canvas the frame is drawn in three
 parts, the bands with the sprites the game builds there (`widescreen_band_oam`: the
 same engine re-run as the arcade bands) and the windows of the picture's nearest
 column, and beyond the level the game holds the canvas is black, as with the arcade
-graphics.
+graphics. The picture also gets, behind its own sprites, those of the bands' sprites
+that reach its edge columns where the game hides them (an object straddling an edge,
+the player walking into the left band), as the arcade's canvas draws them into its 8
+edge columns, so that both cross the edges whole; a special object the picture draws
+itself is left out of them.
 
 **Screens.** A second sandbox draws the rest. The intermission is All-Stars' own: its
 player head and world-picture objects, its world picture, its text and lives, the

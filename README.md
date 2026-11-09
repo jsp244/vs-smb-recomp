@@ -204,7 +204,9 @@ Verified (headless harness with scripted input and RAM pokes, screenshots inspec
   (lava, fire bars, lifts), the treetop and mushroom levels, Lakitu, Bullet Bill and
   Hammer Bro stages; the title with its banner and the demo scrolling it away, the
   PUSH BUTTON, intermission, game-over and continue screens; 16:9 with the objects
-  beside the picture, the walk into the left band and, under water, the tint and the
+  beside the picture, the walk into the left band (Mario small, big and fiery whole as he
+  crosses the picture's edge, in 16:9 and in the Deck's 16:10 Integer view, as are the
+  objects crossing either edge) and, under water, the tint and the
   gradient carried on into the bands; after a halfway restart or a pipe, the page before
   the start in the left band, parsed by All-Stars' parser, where and when the arcade's
   band draws its own (132 part-way starts: black only where the arcade's band is black,
@@ -219,7 +221,7 @@ Verified (headless harness with scripted input and RAM pokes, screenshots inspec
   intermission compared with
   All-Stars' own (run in a reference emulator), the castles' with Bowser breathing fire
   in its picture; the night sky's clouds and the floating score numbers as All-Stars
-  draws them; the castle loops of 5-4, 7-4 and 8-4, where the blocks, the background
+  draws them (a stomped or kicked shell stays on the ground under its points); the castle loops of 5-4, 7-4 and 8-4, where the blocks, the background
   and the bands carry on through the jump back as in All-Stars; All-Stars' own decorations
   (staircases, floor ends and steps, wall caps, coral, the crowns erased, the blocks over
   5-4's and 7-4's hanging floors) on every VS. area, compared cell by cell with All-Stars'
