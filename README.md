@@ -144,8 +144,8 @@ walk on to the edge of the picture you see, as far as the band shows the level: 
 pixels in a 16:9 window, 16 in the 16:10 view the Deck starts in, 42 with Integer
 filling the Deck's screen, 64 on a 1920x1080 one (at most 104). The screen still never
 scrolls back. Enemies and power-ups work there as on the screen: the game's own
-collision code decides a stomp, a hit or a mushroom, run with both objects moved to
-where its 8-bit screen positions do not wrap. A score earned there shows at the
+collision code decides a stomp, a hit, a kicked shell or a mushroom, run with both objects
+moved to where its 8-bit screen positions do not wrap. A score earned there shows at the
 screen's left edge. After a halfway restart or a pipe, the page drawn before the start
 gets its ground as well (the game itself only knows the level from the start page on).
 Not covered: riding a platform into the band, hammers and
@@ -193,7 +193,9 @@ Verified (headless harness with scripted input and RAM pokes, screenshots inspec
   in 151,098 frames of 52 sessions)
 * walking into the left band (`tests/cosim.py --walk N`, N = 42, 64, 104): in and back,
   a Goomba's hit and a stomp there, the wall at an area's start, standing on the drawn
-  page before a halfway restart; bit-identical between both paths with the patches working, the band's
+  page before a halfway restart, a Koopa stomped there and its shell kicked out through
+  the picture or out through the band (stomp, kick, slide, points and the touching bit
+  frame for frame as the same stomp and kick in the picture); bit-identical between both paths with the patches working, the band's
   sprites still the PPU's exactly (`--ws-oam-check`), and nothing changed with them off
   (the 9,000-frame session and the 40 level runs); a real 16:9 window and the Deck's
   1280x800 views (Fit 16 pixels, Integer 42) checked by screenshots

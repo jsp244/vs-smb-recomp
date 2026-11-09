@@ -54,7 +54,10 @@ def level_keys(frames):
 # band and waiting there for the first Goomba (a death beside the screen), the same with a stomp there
 # and a run on through the level, walking left near the area's start (the wall at its first pixel), and
 # after a restart at a halfway page (poked to 4 while the first Goomba kills him) walking into the page
-# drawn before it, which gets its collision as the area starts
+# drawn before it, which gets its collision as the area starts; and that Goomba made a Koopa (its Enemy_ID
+# poked as it appears), stomped in the band, its shell kicked there by the landing after the bounce: out
+# through the picture, and (drifting right in the bounce, so he lands on its far side) out through the band
+KOOPA = "400:SELECT;404:-;640:RIGHT;780:LEFT;880:-;1200:A;1206:-"
 WALK_SCENARIOS = {
     "death": (1500, "400:SELECT;404:-;640:RIGHT;780:LEFT;1000:-", ""),
     "stomp": (2600, "400:SELECT;404:-;640:RIGHT;780:LEFT;1000:-;1234:A;1242:-;1320:RIGHT+B;1350:RIGHT+B+A;"
@@ -65,6 +68,8 @@ WALK_SCENARIOS = {
     "halfway": (1900, "400:SELECT;404:-;640:RIGHT;1100:-;1350:LEFT;1500:-;1540:RIGHT;1560:LEFT;1600:-;"
                       "1640:RIGHT+B;1680:RIGHT+B+A;1720:RIGHT+B;1800:LEFT",
                 ";".join(f"{f}:75B=4" for f in range(1000, 1130, 2))),
+    "kick": (1600, KOOPA + ";1300:RIGHT+B;1340:RIGHT+B+A;1370:RIGHT+B", "762:16=0"),
+    "kick-left": (1600, KOOPA + ";1226:RIGHT;1246:-;1300:RIGHT+B;1340:RIGHT+B+A;1370:RIGHT+B", "762:16=0"),
 }
 
 

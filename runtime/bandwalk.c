@@ -96,10 +96,6 @@ static box_t screen_box(int s) {
     return b;
 }
 
-static int touch(const box_t *a, const box_t *b) {
-    return a->x0 <= b->x1 && b->x0 <= a->x1 && a->y0 <= b->y1 && b->y0 <= a->y1;
-}
-
 /* the player stands on a platform (the flag its collision code leaves) */
 static int on_platform(void) {
     for (int k = 0; k < 6; k++) {
@@ -158,9 +154,13 @@ static void patch_player_box(void) {
     ram[BOX + 2] = (uint8_t)(b.x1 < 0 ? 0 : b.x1);
 }
 
-/* an enemy (slot) beside the screen that the game would skip: tested when it touches the player
-   where the band shows it. The handler of a contact skips it once more for the same reason
-   (HandlePECollisions); let_through says which enemy that check is to let pass. */
+/* an enemy (slot) beside the screen, where the band shows it, that the game would skip: tested as the
+   game tests one on the screen, every other frame, with both boxes moved (patch_enemy_test), so that
+   its own code decides a contact and, when there is none, clears the enemy's touching bit
+   (Enemy_CollisionBits d0, set at a contact so that it counts once). Testing it only while it touched
+   the player left that bit set once they parted, and HandlePECollisions then let nothing more happen
+   between them: a shell stomped there could not be kicked. The handler of a contact skips it once
+   more for being off the screen; let_through says which enemy that check is to let pass. */
 static int let_through;   /* slot + 1, 0 = none */
 
 static void patch_enemy_gate(void) {
@@ -168,7 +168,7 @@ static void patch_enemy_gate(void) {
     if (cpu.a == 0) return;                         /* wholly on the screen: the game tests it */
     box_t p = screen_box(0), e = screen_box(cpu.x + 1);
     if (p.x0 >= 0 && e.x0 >= 0) return;            /* off the screen elsewhere (the right, below) */
-    if (e.x1 < -room() || !touch(&p, &e)) return;
+    if (e.x1 < -room()) return;                     /* beyond the band */
     cpu.a = 0; cpu.z = 1; cpu.n = 0;
     let_through = cpu.x + 1;
 }

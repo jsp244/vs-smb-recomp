@@ -278,14 +278,15 @@ outermost one), and `nes-headless --ws-walk N` sets it for tests.
 | `$AE52` ScrollHandler | the scroll test gets his real position instead of last frame's wrapped 8-bit one |
 | `$ADC6` GameEngine | his sprite columns that wrapped to the right edge are hidden; the left band's re-run draws him |
 | `$B007` PlayerSubs | his bounding box is clipped at the screen's left edge, as CheckLeftScreenBBox clips every other object's |
-| `$D7B7` PlayerEnemyCollision, `$D7F4` HandlePECollisions | an enemy or power-up the game skips as not wholly on the screen is let through when its box touches his beside it |
+| `$D7B7` PlayerEnemyCollision, `$D7F4` HandlePECollisions | an enemy or power-up the game skips as not wholly on the screen is let through while it is beside the screen where the band shows it, and tested every other frame as one on the screen is: the contact as below, and with none the game clears its touching bit (Enemy_CollisionBits d0, set at a contact so that it counts once) itself. Letting it through only while the boxes touched had left that bit set once they parted, so nothing more happened between them: a shell stomped in the band could not be kicked there |
 | `$D7C8` / `$D7CB` around PlayerCollisionCore | both boxes are moved for the test into an 8-bit frame where neither wraps and put back after it, so the game's own rules decide (stomp, injury, power-up) |
 | `$D978`, `$D4E8` SetupFloateyNumber | a score for something beside the screen is shown at its left edge |
 | `$D734`, `$DACA`, `$DAF6` | a hammer or platform does not touch him while he is wholly beside the screen (his box is then the game's empty one at the edge) |
 | `$9687` InitializeArea | at a part-way start (the start page in A) the page before it gets its collision: InitializeArea cleared the block buffer ($0500-$069F, 13 rows of 16 metatiles per page parity) and the game renders from the start page on, so `widescreen_fill_collision` copies the last 128 pixels of the band's rendering of that page (`make_fill`'s block buffer) into the game's. Those slots belong to the next page's last columns only once the parser is 512 pixels past them, out of reach. Without that copy (the walk switched on later in the area) the wall stays at the start page |
 
 The screen still never scrolls back. `tests/cosim.py --walk N` (a death and a stomp in the
-band, the area's start, a halfway restart) stays bit-identical with the patches working, and the band's repeat of the engine still builds the PPU's
+band, the area's start, a halfway restart, a Koopa stomped in the band and its shell kicked
+out through the picture and out through the band) stays bit-identical with the patches working, and the band's repeat of the engine still builds the PPU's
 sprites exactly (`--ws-oam-check`); with `widescreen_walk` 0 the standard session
 and the 40 level runs are unchanged.
 
