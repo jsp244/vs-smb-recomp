@@ -257,7 +257,9 @@ Verified (headless harness with scripted input and RAM pokes, screenshots inspec
   down, the water's surface; blocks hit from below in 1-1 and 1-2 (a ? block with a coin, the
   mushroom's ? block with the mushroom rising behind the used block, a brick bumped by small
   Mario and broken by big Mario) frame by frame against the arcade, with the used block and
-  the bouncing block's place as All-Stars' own code writes them; every level's columns
+  the bouncing block's place as All-Stars' own code writes them; the player going into the
+  castle after each of the 20 flagpoles, small, big and fiery, gone on the arcade's frame (in
+  4:3 and 16:9); every level's columns
   checked against VS.'s block buffer by a debug self-check (all 32 levels, with deaths and
   the restarts at the halfway page: no cell different). The emulation is untouched by it: per-frame
   state hashes are identical with and without it (and with the band walk, and through a

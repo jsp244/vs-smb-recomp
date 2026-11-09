@@ -340,7 +340,12 @@ All-Stars' AreaParserCore ($03:A436) parses the same column of VS.'s own level d
 (copied from VS.'s work RAM and converted to All-Stars' format, where row-15 objects
 have a third byte), in step: page, column and block-buffer position are VS.'s. The
 metatiles that come out are All-Stars' choice for VS.'s level (the bushes a row lower,
-bridge rails with ends, two castle wall patterns). Run-ahead and rewind re-parse
+bridge rails with ends, two castle wall patterns). One object is moved: All-Stars' tall
+castle (each x-3 ends with one) is ten columns wide ($04:8F44), towers at both ends and
+three doors between, where the NES's is five with a door in its first column, in which VS.
+stops the player and puts him behind the background; so All-Stars' starts two columns
+before VS.'s, its first door where the arcade's is (and its star flag's column the
+arcade's). Run-ahead and rewind re-parse
 columns: a ring of 64 snapshots of All-Stars' parser state (the low 8 KiB of work
 RAM) lets a column be parsed again from the state before it; when none is kept, or the
 area is new or not the one built, the area is rebuilt and replayed from its start at

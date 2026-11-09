@@ -518,6 +518,31 @@ static int to_allstars_format(const uint8_t *in, int n, uint8_t *out, int max) {
     return o;
 }
 
+/* All-Stars' tall castle (a castle object from row 0: the one each x-3 ends with) is ten columns wide ($04:8F44,
+   its metatiles at $04:8ED6: a tower in the first two and in the last two, its three doors between), the NES's
+   five, with its doors in the first, third and fifth (VS.'s $A72C). At the level's end VS. stops the player in
+   the castle's first column (a brick in its second) and puts him behind the background, in its first door: in
+   All-Stars' castle there he would stand before its left tower, half hidden. So its castle starts two columns
+   earlier where it stays in its page and the order of the objects allows (at the eight x-3 ends both hold): its
+   first door is then where the arcade's is, and its star flag's column (its fifth) the arcade's (the third). A
+   castle a level starts beside (its first columns) stays. */
+static void tall_castles(uint8_t *d, int n) {
+    int i = 2, page = 0, prev_page = -1, prev_col = 0;
+    while (i + 1 < n && d[i] != 0xFD) {
+        int three = (d[i] & 0x0F) == 0x0F, col = d[i] >> 4;
+        if (three && i + 2 >= n) break;
+        if ((three ? d[i + 2] : d[i + 1]) & 0x80) page++;
+        if ((d[i] & 0x0F) == 0x0D && !(d[i + 1] & 0x40)) page = d[i + 1] & 0x1F;   /* a page skip */
+        if (three && ((d[i + 2] >> 4) & 7) == 2 && !(d[i + 1] & 0x0F) && col >= 2 && (prev_page < page || prev_col <= col - 2)) {
+            col -= 2;
+            d[i] = (uint8_t)((col << 4) | 0x0F);
+        }
+        prev_page = page;
+        prev_col = col;
+        i += three ? 3 : 2;
+    }
+}
+
 /* an area's objects as 16-bit keys (All-Stars format in; three-byte objects keep their first two) */
 static int object_keys(const uint8_t *d, int n, uint16_t *keys, int max) {
     int i = 2, k = 0;
@@ -1161,6 +1186,7 @@ static void build_area(const uint8_t *r) {
     area.data_len = n - 2;
     memcpy(area.data, raw + 2, (size_t)area.data_len);
     int m = to_allstars_format(raw, n, conv, sizeof conv);
+    tall_castles(conv, m);
     for (int i = 0; i < m; i++) w[AREA_DATA_COPY - 0x7E0000 + (uint32_t)i] = conv[i];
     w[0xFA] = (uint8_t)((AREA_DATA_COPY + 2) & 0xFF);
     w[0xFB] = (uint8_t)(((AREA_DATA_COPY + 2) >> 8) & 0xFF);
