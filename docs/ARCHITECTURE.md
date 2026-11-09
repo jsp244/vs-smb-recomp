@@ -333,7 +333,13 @@ it: All-Stars gives its 8-4 water area a castle's style ($BA 3), and its setup l
 water's tiles and leaves the rest of VRAM as the castle the pipe comes from had it (the
 castle's stone, which its wall and floor are drawn with). So before an area of a castle's
 style that is no castle, the sandbox sets up the level's first area (All-Stars'
-LoadAreaPointer lookup, $04:C01F, by world and area number) and keeps its VRAM.
+LoadAreaPointer lookup, $04:C01F, by world and area number) and keeps its VRAM. The
+water's tiles it loads are the castle's own (its area number's tilesets, $04:97CD): BG
+tiles $100-$17F, where a water area has its seabed and coral, hold the ruins its layer 2
+is drawn with, and All-Stars' 8-4 has a wall where VS.'s has a coral, above the pipe out.
+So for a water area in a castle's style the sandbox first sets up All-Stars' first water
+area and keeps those tiles, which go to $300-$37F (VRAM nothing else uses), and layer 1
+takes the tiles of $100-$17F from there.
 
 **Columns.** VS.'s AreaParserCore ($A2D7) is a hook too: for every column VS. parses,
 All-Stars' AreaParserCore ($03:A436) parses the same column of VS.'s own level data

@@ -244,7 +244,8 @@ Verified (headless harness with scripted input and RAM pokes, screenshots inspec
   own areas parsed by its own parser (in the world each is played in) where the level is
   SMB's: 1,140 cells as All-Stars draws them and none wrong, the rest of the difference
   All-Stars' own slips, and no cell changed between solid and empty; 8-4's water area
-  compared with All-Stars' own in the reference emulator (its stone, caps and floor);
+  compared with All-Stars' own in the reference emulator (its stone, caps and floor), its
+  coral above the pipe out (a wall in All-Stars' own) drawn as on the other water levels;
   the level ends and the objects All-Stars
   draws its own way, each reached with RAM pokes (a start page, star power, an object
   spawned) and compared with All-Stars in the reference emulator: the goal flag, the

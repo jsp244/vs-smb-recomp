@@ -963,6 +963,7 @@ static struct {
     bool     resync;           /* VS.'s machine jumped (a state load, rewind, reset): parse again */
     uint16_t bg2_scroll, bg3_scroll;
     int      bg2_pages;        /* how many pages of layer 2 the area setup filled: they repeat */
+    bool     water_tiles;      /* a water area in a castle's style: layer 1 takes the water's tiles from WATER_TILES_AT */
     int      bg2_seam;         /* after a castle loop, layer 2's x left of which it shows what it did before (-1: none) */
     bool     loop_noted;       /* a castle loop taken, noted at GameEngine (loop_taken), its column not parsed yet */
     uint8_t  data[1024];       /* the area's data (its objects, from VS.'s data pointer in PRG RAM) it was built from */
@@ -1136,10 +1137,36 @@ static void area_inputs(const uint8_t *r, uint8_t ptr) {
 
 /* All-Stars draws its 8-4 water area in a castle's style ($BA 3, its type water): the setup loads the water's
    tiles and leaves the rest of VRAM as the castle its pipe comes from had it. So the sandbox sets up the level's
-   first area (LoadAreaPointer's, by world and area number) before such an area and keeps that VRAM */
+   first area (LoadAreaPointer's, by world and area number) before such an area and keeps that VRAM.
+   The castle's water graphics go in BG tiles $100-$17F, where a water area has its seabed and its coral, and its
+   layer 2 uses them (the tilesets are All-Stars' area index's, $DB: $04:97CD); All-Stars' 8-4 has walls where VS.'s
+   has a coral (above the pipe out). So for a water area in this style the sandbox first sets up All-Stars' first
+   water area, in a water area's own style, and keeps those tiles, which build_area puts at WATER_TILES_AT (VRAM
+   nothing else uses) and the layer 1 writers take from there (map16_area) */
+#define WATER_TILES      0x100
+#define WATER_TILES_N    0x80
+#define WATER_TILES_AT   0x300
+static uint8_t water_tiles[WATER_TILES_N * 32];
+
 static void castle_vram_first(const uint8_t *r) {
     uint8_t *w = sb->wram, ptr = w[RAM_AREA_PTR];
+    area.water_tiles = false;
     if (w[RAM_AS_STYLE] != 3 || w[RAM_AS_TYPE] == 3) return;
+    if (w[RAM_AS_TYPE] == 0) {
+        area_inputs(r, 0);
+        sb_call(sb, INIT_AREA, 1, 400000);
+        if (w[RAM_AS_STYLE] != 3) {
+            sb_call(sb, AREA_GRAPHICS, 0, 4000000);
+            w[0x0154] = 0;
+            sb_call(sb, SMB1_NMI, 0, 400000);
+            uint32_t chr = (uint32_t)(sb->ppu.bgnba[0] & 0x0F) << 12;
+            memcpy(water_tiles, sb->ppu.vram + ((chr + WATER_TILES * 16) & 0x7FFF) * 2, sizeof water_tiles);
+            area.water_tiles = true;
+        }
+        memcpy(sb, sb_base, sizeof *sb);
+        area_inputs(r, ptr);
+        sb_call(sb, INIT_AREA, 1, 400000);
+    }
     sb_call(sb, LEVEL_AREA_PTR, 0, 100000);
     uint8_t lvl = (uint8_t)sb->cpu.a;
     if (lvl == ptr) return;
@@ -1207,6 +1234,10 @@ static void build_area(const uint8_t *r) {
     area.bg2_seam = -1;
     w[0x0154] = 0;
     sb_call(sb, SMB1_NMI, 0, 400000);
+    if (area.water_tiles) {
+        uint32_t chr = (uint32_t)(sb->ppu.bgnba[0] & 0x0F) << 12;
+        memcpy(sb->ppu.vram + ((chr + WATER_TILES_AT * 16) & 0x7FFF) * 2, water_tiles, sizeof water_tiles);
+    }
     memset(area.parsed, 0, sizeof area.parsed);
     memset(area.have, 0, sizeof area.have);
     area.ready = true;
@@ -1982,12 +2013,22 @@ static uint8_t cell_metatile(int col, int row) {
     return mt_seen_ok[now] ? mt_seen[now] : mt_static[now];
 }
 
+/* a metatile's tilemap words in the area's layer 1 (in a water area in a castle's style the water's tiles moved:
+   castle_vram_first) */
+static void map16_area(uint8_t mt, uint16_t w[4]) {
+    map16(mt, w);
+    if (!area.water_tiles) return;
+    for (int k = 0; k < 4; k++)
+        if ((w[k] & 0x3FF) >= WATER_TILES && (w[k] & 0x3FF) < WATER_TILES + WATER_TILES_N)
+            w[k] = (uint16_t)(w[k] + (WATER_TILES_AT - WATER_TILES));
+}
+
 static void write_bg1(void) {
     uint8_t *v = sb->ppu.vram;
     for (int col = 0; col < 32; col++)
         for (int row = -2; row < 14; row++) {
             uint16_t w[4] = { 0x0024, 0x0024, 0x0024, 0x0024 };   /* tile $24 is blank in All-Stars too */
-            if (row >= 0 && row < 13) map16(cell_metatile(col, row), w);
+            if (row >= 0 && row < 13) map16_area(cell_metatile(col, row), w);
             int tx = col * 2, ty = (row + 2) * 2;
             uint32_t base = (uint32_t)((tx >> 5) * 0x400 + ty * 32 + (tx & 31));
             uint32_t at[4] = { base, base + 32, base + 1, base + 33 };
@@ -2110,7 +2151,7 @@ static int write_bg1_before(int b0, int b1, unsigned *shown) {
         if (area.have[s] && area.world_col[s] != c && area.world_col[s] < front) continue;
         for (int row = 0; row < 13; row++) {
             uint16_t w[4];
-            map16(before.smas[k][row], w);
+            map16_area(before.smas[k][row], w);
             int tx = s * 2, ty = (row + 2) * 2;
             uint32_t base = (uint32_t)((tx >> 5) * 0x400 + ty * 32 + (tx & 31));
             uint32_t at[4] = { base, base + 32, base + 1, base + 33 };
