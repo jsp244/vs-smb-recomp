@@ -117,6 +117,7 @@ static config_t cfg = {
 
 static const char *const display_modes[] = { "Windowed", "Fullscreen", "Fullscreen (exclusive)" };
 static const char *const runahead_names[] = { "Off", "1 frame", "2 frames", "3 frames" };
+static const char *const runahead_locked_names[] = { "Off (All-Stars graphics)" };   /* see runahead_frames */
 static const char *const latency_names[]  = { "Low", "Normal", "Safe" };
 static const char *const window_sizes[]  = { "1x", "2x", "3x", "4x", "5x", "6x" };
 static const char *const scalings[]      = { "Integer (exact pixels)", "Fit (fills the screen)", "Stretch (distorts)" };
@@ -213,9 +214,22 @@ static ui_item play_items[8], gfx_all[15], gfx_items[15], aud_all[4], aud_items[
 #define GFX_ROWS 15
 #define GFX_WINDOW_SIZE_ROW 2
 #define GFX_GRAPHICS_ROW 4
+#define GFX_RUNAHEAD_ROW 13
 #define GFX_INFO_ROW 14
 static ui_tab tabs[N_TABS];
 static ui_menu menu;
+
+/* the game is drawn with the All-Stars graphics: chosen (Graphics > Graphics), and their ROM loaded */
+static int allstars_drawn(void) { return allstars_enabled && allstars_loaded(); }
+
+/* the run-ahead frames actually run: none while the All-Stars graphics are drawn. Each run-ahead frame is
+   a whole emulated frame, the remaster's work included, so at 2 frames that work ran three times for
+   every frame shown, and on the Steam Deck the sound broke up for the time it took. The player's own
+   setting (cfg.runahead) stays in the ini and applies again with the arcade graphics; the menu shows the
+   row locked meanwhile (runahead_locked_names). The All-Stars music alone needs no lock: it runs once
+   per real frame, in audio_out_pump. */
+static int runahead_frames(void) { return allstars_drawn() ? 0 : cfg.runahead; }
+static int runahead_locked;            /* the locked row's value: its one choice */
 
 /* ------------------------------------------------------------------ */
 /* small platform helpers                                              */
@@ -425,7 +439,8 @@ static void write_config(void) {
     fprintf(f, "no_sprite_limit=%d     ; 1: draw every sprite on a line instead of 8 (no flicker)\n", cfg.no_sprite_limit);
     fprintf(f, "walk_to_edge=%d        ; 1: in a widescreen view the player may walk left into the band beside the picture\n", cfg.walk_to_edge);
     fprintf(f, "low_latency=%d        ; 1: frame delay, locked to the display (Windows, Android) or timer pacing without vsync (Linux); 0: plain timer (Linux: vsync)\n", cfg.lowlat);
-    fprintf(f, "runahead=%d            ; frames of run-ahead (0-3); the game shows a press %d frame%s after it\n", cfg.runahead, GAME_LAG, GAME_LAG == 1 ? "" : "s");
+    fprintf(f, "runahead=%d            ; frames of run-ahead (0-3; none while allstars=1 draws the All-Stars graphics); the game shows a press %d frame%s after it\n",
+            cfg.runahead, GAME_LAG, GAME_LAG == 1 ? "" : "s");
     fprintf(f, "audio_latency=%d       ; 0 low (~25 ms), 1 normal (~45 ms), 2 safe (~90 ms)\n", cfg.audio_latency);
     fprintf(f, "volume=%d\n", cfg.volume);
     fprintf(f, "rewind_enabled=%d      ; keep a rewind history; hold the rewind key (above) to go back\n", cfg.rewind);
@@ -677,7 +692,7 @@ static void frame_to_rgb(const SDL_Rect *src) {
     int stride = FB_W;
     frame_w = src->w; frame_h = src->h;
     /* the remastered picture (All-Stars' graphics), where it can be drawn */
-    if (allstars_enabled && allstars_loaded()) {
+    if (allstars_drawn()) {
         int x0 = widescreen_on() ? src->x - WS_BAND : src->x, y0 = widescreen_on() ? src->y - WS_VBAND : src->y;
         if (allstars_render(frame_rgb, frame_w, x0, y0, frame_w, frame_h)) return;
     }
@@ -1559,9 +1574,13 @@ static void layout_audio(void) {
     apply_music();
 }
 
-/* the Graphics rows shown: all of them, minus Window size while a resolution is set (it is unused then) */
+/* the Graphics rows shown: all of them, minus Window size while a resolution is set (it is unused then);
+   Run-ahead locked at Off while the All-Stars graphics are drawn (runahead_frames) */
 static void layout_gfx(void) {
-    int n = 0;
+    int n = 0, locked = allstars_drawn();
+    gfx_all[GFX_RUNAHEAD_ROW].value = locked ? &runahead_locked : &cfg.runahead;
+    gfx_all[GFX_RUNAHEAD_ROW].choices = locked ? runahead_locked_names : runahead_names;
+    gfx_all[GFX_RUNAHEAD_ROW].nchoices = locked ? 1 : 4;   /* one choice: no arrows, no change (ui.c) */
     for (int i = 0; i < GFX_ROWS; i++) {
         if (i == GFX_WINDOW_SIZE_ROW && cfg.res_w > 0) continue;
         if (handheld && i <= GFX_WINDOW_SIZE_ROW) continue;   /* display mode, resolution, window size: the screen is fixed */
@@ -1620,11 +1639,15 @@ static void refresh_gfx_info(void) {
     }
     if (!why[0] && integer_fill())
         snprintf(why, sizeof why, "\nThe level fills the screen during play; other screens keep their bars.");
+    char ra[120] = "";
+    if (allstars_drawn() && cfg.runahead > 0 && cfg.runahead < 4)
+        snprintf(ra, sizeof ra, "\nRun-ahead is off with the All-Stars graphics: drawing them ahead takes too long. "
+                 "Arcade brings back your %s.", runahead_names[cfg.runahead]);
     /* the part on the screen (Integer filling it lets the outermost pixels overhang the edges) */
     int vis_w = (dst.x + dst.w < out_w ? dst.x + dst.w : out_w) - (dst.x > 0 ? dst.x : 0);
     int vis_h = (dst.y + dst.h < out_h ? dst.y + dst.h : out_h) - (dst.y > 0 ? dst.y : 0);
-    snprintf(gfx_all[GFX_INFO_ROW].info, sizeof gfx_all[GFX_INFO_ROW].info, "Picture %dx%d in the %dx%d %s (%.1fx).%s%s",
-             vis_w, vis_h, out_w, out_h, where, (double)dst.h / src.h, why, hz);
+    snprintf(gfx_all[GFX_INFO_ROW].info, sizeof gfx_all[GFX_INFO_ROW].info, "Picture %dx%d in the %dx%d %s (%.1fx).%s%s%s",
+             vis_w, vis_h, out_w, out_h, where, (double)dst.h / src.h, why, hz, ra);
     layout_gfx();
 }
 
@@ -1719,7 +1742,7 @@ static void build_menu(void) {
     g[10] = (ui_item){ "Overscan crop", UI_CHOICE, GFX_CHANGED, &cfg.overscan, onoff, 2, 0, 0, 0, NULL, "", NULL };
     g[11] = (ui_item){ "Sprite limit", UI_CHOICE, GFX_CHANGED, &cfg.no_sprite_limit, sprite_limits, 2, 0, 0, 0, NULL, "", NULL };
     g[12] = (ui_item){ "Low-latency sync", UI_CHOICE, GFX_CHANGED, &cfg.lowlat, onoff, 2, 0, 0, 0, NULL, "", NULL };
-    g[13] = (ui_item){ "Run-ahead", UI_CHOICE, GFX_CHANGED, &cfg.runahead, runahead_names, 4, 0, 0, 0, NULL, "", NULL };
+    g[GFX_RUNAHEAD_ROW] = (ui_item){ "Run-ahead", UI_CHOICE, GFX_CHANGED, &cfg.runahead, runahead_names, 4, 0, 0, 0, NULL, "", NULL };
     g[14] = (ui_item){ "", UI_INFO, 0, NULL, NULL, 0, 0, 0, 0, NULL, "", NULL };
 
     ui_item *a = aud_all;
@@ -2653,7 +2676,7 @@ int main(int argc, char **argv) {
     int frames = 0, paused = 0, stats_frames = 0, missed = 0;
     const char *pace_names[] = { "timer", "vblank phase-lock", "vsynced present" };
     if (stats_file) fprintf(stats_file, "pacing: %s, display %.0f Hz, %d vblank(s) per frame, run-ahead %d\n",
-                            pace_names[pace_mode], refresh_hz, vsync_div, cfg.runahead);
+                            pace_names[pace_mode], refresh_hz, vsync_div, runahead_frames());
     while (running) {
         widescreen_walk = walk_band();
         int in_game = (state == ST_GAME && !paused);
@@ -2821,20 +2844,22 @@ int main(int argc, char **argv) {
                 /* Start + Select: the menu, from the moment before the first of the two went down */
                 if (chord_rollback(rw_state)) {
                     /* states carry no picture: draw the restored moment the way run-ahead shows it */
+                    int ahead = runahead_frames();
                     nes_state_save(ra_state, ra_size);
                     vs_input(0);
-                    for (int i = 0; i < (cfg.runahead > 0 ? cfg.runahead : 1); i++) nes_run_frame();
+                    for (int i = 0; i < (ahead > 0 ? ahead : 1); i++) nes_run_frame();
                     nes_state_load(ra_state, ra_size);
                 }
                 open_menu();
                 draw_menu();
             } else {
-                if (cfg.runahead > 0 && !fast) {
-                    /* run-ahead: show the frame the game will reach `runahead` frames from now with this
+                int ahead = runahead_frames();   /* none with the All-Stars graphics */
+                if (ahead > 0 && !fast) {
+                    /* run-ahead: show the frame the game will reach `ahead` frames from now with this
                        input held, then return to the real timeline. Audio comes from the real frame only.
                        (No allstars_reset: the remastered graphics follow this short return themselves.) */
                     nes_state_save(ra_state, ra_size);
-                    for (int i = 0; i < cfg.runahead; i++) nes_run_frame();
+                    for (int i = 0; i < ahead; i++) nes_run_frame();
                     draw_game();
                     nes_state_load(ra_state, ra_size);
                 } else {

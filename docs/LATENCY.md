@@ -83,6 +83,9 @@ the game's own frame removed by run-ahead: faster than the arcade board on a CRT
 * Graphics > Low-latency sync: Off switches to plain timer pacing (for displays
   or drivers where the vblank wait misbehaves; look at `--stats` for frames
   far from 16.6 ms).
-* Graphics > Run-ahead: 0-3 frames.
+* Graphics > Run-ahead: 0-3 frames. Off (locked in the menu) while the All-Stars
+  graphics are drawn: every run-ahead frame repeats the remaster's work, which at 2
+  frames left the Steam Deck too little time per frame for its sound; the setting
+  applies again with the arcade graphics.
 * Audio > Latency: Low / Normal / Safe.
 * Prefer a wired controller; Bluetooth adds roughly 10 ms before SDL sees the press.

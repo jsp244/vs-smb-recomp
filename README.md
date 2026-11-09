@@ -426,7 +426,8 @@ then the new key or pad button). Every connected controller is opened and merged
 See [docs/LATENCY.md](docs/LATENCY.md). In short: the loop is phase-locked to the
 display's vertical blank and reads the controller about 2 ms before each frame is
 presented (frame delay), the GPU queue is one frame deep, **run-ahead** (default 1
-frame, the game's own reaction time, measured) shows the game's response on the frame
+frame, the game's own reaction time, measured; off while the All-Stars graphics are
+drawn, whose work it would repeat) shows the game's response on the frame
 of the press, and audio sits at 25-45 ms with dynamic rate control. Exclusive
 fullscreen bypasses the desktop compositor. `vssmb --play --stats out.txt` logs the
 measured pacing once a second. On Android each frame is locked to the compositor's

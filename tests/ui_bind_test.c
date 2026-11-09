@@ -151,6 +151,30 @@ int main(int argc, char **argv) {
         CHECK(e.type == UI_EV_ACTIVATE && e.id == 31, "a fresh Enter press still activates");
     }
 
+    /* 11. a choice row with a single choice (Run-ahead, locked off while the All-Stars graphics are on) is a
+       fixed value: Left, Right, Enter and the pad change nothing; a row with more choices still changes */
+    {
+        static const char *const one[] = { "Off (All-Stars graphics)" };
+        static const char *const four[] = { "Off", "1 frame", "2 frames", "3 frames" };
+        int locked = 0, ra = 2, moved = 0;
+        ui_item citems[2];
+        memset(citems, 0, sizeof citems);
+        citems[0] = (ui_item){ "Run-ahead", UI_CHOICE, 41, &locked, one, 1, 0, 0, 0, NULL, "", NULL };
+        citems[1] = (ui_item){ "Run-ahead", UI_CHOICE, 42, &ra, four, 4, 0, 0, 0, NULL, "", NULL };
+        ui_tab ctab = { "Graphics", citems, 2, 0 };
+        ui_menu cm; memset(&cm, 0, sizeof cm);
+        cm.tabs = &ctab; cm.ntabs = 1; cm.focus = 1; cm.hover_tab = cm.hover_item = -1;
+        moved |= key(&cm, SDLK_RIGHT, 0).type != UI_EV_NONE;
+        moved |= key(&cm, SDLK_LEFT, 0).type != UI_EV_NONE;
+        moved |= key(&cm, SDLK_RETURN, 0).type != UI_EV_NONE;
+        moved |= pad(&cm, SDL_CONTROLLER_BUTTON_DPAD_RIGHT).type != UI_EV_NONE;
+        moved |= pad(&cm, SDL_CONTROLLER_BUTTON_A).type != UI_EV_NONE;
+        CHECK(!moved && locked == 0 && ctab.sel == 0, "a single-choice row (run-ahead locked off) does not change");
+        key(&cm, SDLK_DOWN, 0);
+        e = key(&cm, SDLK_RIGHT, 0);
+        CHECK(ctab.sel == 1 && e.type == UI_EV_CHANGED && e.id == 42 && ra == 3, "a row with four choices still changes");
+    }
+
     printf("%s (%d failure%s)\n", failures ? "UI BINDING TEST FAILED" : "UI BINDING TEST PASSED", failures, failures == 1 ? "" : "s");
     return failures ? 1 : 0;
 }

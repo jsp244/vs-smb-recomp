@@ -55,7 +55,9 @@ Graphics      Display mode (windowed / fullscreen / fullscreen exclusive),
               shader (off / scanlines / CRT / CRT curved / glow) and its strength,
               overscan crop, sprite limit (8 per line as on the hardware, or
               unlimited: no flicker), low-latency sync (phase-locks to the
-              display), run-ahead (0-3 frames; 1 cancels the game's own input lag).
+              display), run-ahead (0-3 frames; 1 cancels the game's own input lag;
+              off while the All-Stars graphics are on, since drawing them for the
+              frames ahead takes too long: Arcade brings your setting back).
               The line under the rows says what the settings produce and why there
               are borders or bars when there are.
 Audio         Volume, music (As the graphics / Arcade / All-Stars: shown once the

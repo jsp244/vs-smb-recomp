@@ -204,7 +204,7 @@ void ui_draw(SDL_Renderer *r, ui_menu *m, int ww, int wh) {
             int vw = font_width(vbuf, s);
             int vx = rx - s * 2 - vw;
             int lx = vx - s * 2 - aw;
-            int adjustable = (it->kind == UI_CHOICE || it->kind == UI_INT);
+            int adjustable = ((it->kind == UI_CHOICE && it->nchoices > 1) || it->kind == UI_INT);   /* one choice: fixed */
             if (adjustable) {
                 font_draw(r, lx, ty, s, selected ? C_ACCENT : C_DIM, 0, "<");
                 font_draw(r, rx, ty, s, selected ? C_ACCENT : C_DIM, 0, ">");
@@ -232,7 +232,7 @@ void ui_draw(SDL_Renderer *r, ui_menu *m, int ww, int wh) {
 static ui_event ev(int type, int id) { ui_event e = { type, id }; return e; }
 
 static ui_event change(ui_item *it, int dir) {
-    if (it->kind == UI_CHOICE && it->value && it->nchoices > 0) {
+    if (it->kind == UI_CHOICE && it->value && it->nchoices > 1) {   /* a single choice is a fixed value */
         *it->value = (*it->value + dir + it->nchoices) % it->nchoices;
         return ev(UI_EV_CHANGED, it->id);
     }

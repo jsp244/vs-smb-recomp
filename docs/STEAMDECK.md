@@ -72,5 +72,8 @@ Tips
   without vsync, as Mesen does by default, so no frame waits in a queue; with run-ahead
   the game reacts a frame sooner than in Mesen at its defaults. Switch it off for
   vsync: the smoothest scrolling, at up to one frame more latency.
+- Run-ahead is off while the All-Stars graphics are on: drawing them for the frames
+  ahead takes more time than the Deck has per frame, and the sound broke up. The menu
+  shows it locked; Graphics > Arcade brings your run-ahead setting back.
 - The 9 save state slots, settings and screenshots are kept in the game folder.
 - The full player notes are in README.txt.
