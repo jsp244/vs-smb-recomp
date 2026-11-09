@@ -2154,10 +2154,11 @@ static int trigger_selftest(void) {
 }
 
 static void usage(void) {
-    printf("usage: vssmb [rom.nes | suprmrio.zip] [--play] [--selftest N out.png] [--ui-shot out.png [tab [frames]]]\n"
+    printf("usage: vssmb [rom.nes | suprmrio.zip] [--allstars FILE] [--play] [--selftest N out.png] [--ui-shot out.png [tab [frames]]]\n"
            "             [--game-shot out.png [frames] [--state-load state]] [--rewind-test N] [--reset-test N]\n"
            "             [--list-controllers [out.txt]] [--list-modes [out.txt]] [--chord-test] [--trigger-test] [--stats out.txt]\n"
            "             [--touch] [--touch-test] [--quit-after frames] [--update-check] [--update-test VERSION [args...]]\n"
+           "  --allstars FILE: your Super Mario All-Stars ROM (.sfc) for the remastered graphics and music.\n"
            "  --reset-test N: Play > Reset game after N frames must be instant and restart the game.\n"
            "  --update-check: what the Updates tab's check finds. --update-test: the same as if this build were\n"
            "  VERSION, then installs the newest release over this program and starts it with args (scratch folders only)\n");
