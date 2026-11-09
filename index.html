@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>VS. Super Mario Bros. native port for Windows, Linux, Steam Deck and Android</title>
+<meta name="description" content="Nintendo's 1986 arcade game VS. Super Mario Bros. as a native Windows, Linux, Steam Deck and Android program, made by static recompilation. Bring your own dump.">
+<link rel="canonical" href="https://jp244btc.github.io/vs-smb-recomp/">
+<meta name="color-scheme" content="light dark">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="VS. Super Mario Bros. native port">
+<meta property="og:title" content="VS. Super Mario Bros. native port">
+<meta property="og:description" content="Nintendo's 1986 arcade game as a native Windows, Linux, Steam Deck and Android program, made by static recompilation. Bring your own dump.">
+<meta property="og:url" content="https://jp244btc.github.io/vs-smb-recomp/">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  "name": "VS. Super Mario Bros. native port",
+  "description": "Nintendo's 1986 arcade game VS. Super Mario Bros. as a native Windows, Linux, Steam Deck and Android program, made by static recompilation. Bring your own dump.",
+  "applicationCategory": "GameApplication",
+  "operatingSystem": "Windows, Linux, SteamOS, Android",
+  "url": "https://jp244btc.github.io/vs-smb-recomp/",
+  "downloadUrl": "https://github.com/jp244btc/vs-smb-recomp/releases/latest",
+  "license": "https://github.com/jp244btc/vs-smb-recomp/blob/main/LICENSE",
+  "isAccessibleForFree": true,
+  "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" }
+}
+</script>
+<style>
+:root {
+  --bg: #fbfaf7; --fg: #1f1d1a; --muted: #5f5a52; --line: #e4dfd5; --card: #ffffff;
+  --accent: #b42318; --accent-fg: #ffffff; --code-bg: #f1ede5;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #141312; --fg: #ece8e1; --muted: #a9a297; --line: #35322d; --card: #1c1b19;
+    --accent: #ff8b7b; --accent-fg: #1b0c0a; --code-bg: #26241f;
+  }
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0; background: var(--bg); color: var(--fg);
+  font: 17px/1.6 system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+.wrap { max-width: 46rem; margin: 0 auto; padding: 3rem 1rem 2rem; }
+.kicker { color: var(--muted); font-size: .9rem; margin: 0; }
+h1 { font-size: clamp(1.9rem, 5vw, 2.6rem); line-height: 1.15; margin: .3rem 0 1rem; letter-spacing: -.01em; }
+h2 { font-size: 1.3rem; line-height: 1.3; margin: 2.4rem 0 .8rem; }
+.lede { font-size: 1.12rem; }
+a { color: var(--accent); }
+a:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; border-radius: .2rem; }
+.actions { display: flex; flex-wrap: wrap; gap: .75rem; margin: 1.5rem 0; }
+.btn {
+  display: inline-block; padding: .65rem 1.1rem; border-radius: .5rem; font-weight: 600;
+  border: 1px solid var(--line); background: var(--card); color: var(--fg); text-decoration: none;
+}
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); }
+.note {
+  background: var(--card); border: 1px solid var(--line); border-left: 4px solid var(--accent);
+  border-radius: .5rem; padding: .9rem 1rem;
+}
+li { margin: .45rem 0; }
+table { width: 100%; border-collapse: collapse; font-size: .95rem; }
+th, td { text-align: left; vertical-align: top; padding: .55rem .6rem; border-bottom: 1px solid var(--line); }
+th { color: var(--muted); font-weight: 600; }
+code {
+  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace; font-size: .9em;
+  background: var(--code-bg); padding: .1em .35em; border-radius: .3em; overflow-wrap: anywhere;
+}
+footer { color: var(--muted); font-size: .9rem; border-top: 1px solid var(--line); margin-top: 3rem; padding-top: 1rem; }
+@media (max-width: 34rem) {
+  table, tbody, tr, td { display: block; }
+  thead { display: none; }
+  td:first-child { font-weight: 600; border-bottom: 0; padding-bottom: 0; }
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <p class="kicker">Unofficial fan project · open source (MIT)</p>
+  <h1>VS. Super Mario Bros. native port</h1>
+  <p class="lede">Nintendo's 1986 arcade game, VS. Super Mario Bros., as a native program for Windows, Linux, the Steam Deck and Android. Its 6502 program is statically recompiled into C and runs on a small runtime that recreates the Vs. System board.</p>
+  <p class="actions">
+    <a class="btn primary" href="https://github.com/jp244btc/vs-smb-recomp/releases/latest">Download the latest release</a>
+    <a class="btn" href="https://github.com/jp244btc/vs-smb-recomp">Source code on GitHub</a>
+  </p>
+  <p class="note"><strong>No game data is included.</strong> You need your own dump of the VS. Super Mario Bros. board: an iNES <code>.nes</code> file, or MAME's <code>suprmrio.zip</code>. The program checks its hash and refuses anything else.</p>
+</header>
+
+<main>
+<section id="features">
+  <h2>What you get</h2>
+  <ul>
+    <li><strong>The cabinet as it was.</strong> Coin slot, 1P and 2P start, and the board's DIP switches: free play (the default) or coins and credits, lives, coins for an extra life, timer speed and lives after a continue.</li>
+    <li><strong>Arcade colours.</strong> The Vs. board's RGB palette as the cabinet's monitor showed it, or the NES console's colours.</li>
+    <li><strong>Widescreen.</strong> In 16:9 and 16:10 the level carries on beside the picture during play, with the enemies the game keeps there, and Mario can walk into it.</li>
+    <li><strong>Super Mario All-Stars graphics and music (optional).</strong> With your own SNES Super Mario All-Stars ROM, the game can look and sound like All-Stars' Super Mario Bros., drawn and played by All-Stars' own code in a small SNES sandbox. Nothing from that ROM is saved.</li>
+    <li><strong>Save states, rewind and fast-forward.</strong> Nine slots, several minutes of rewind, and run-ahead to cancel the game's own input lag.</li>
+    <li><strong>Display options.</strong> Integer, fit or stretch scaling, scanline and CRT shaders, and an unlimited sprite mode with no flicker.</li>
+    <li><strong>Keyboard and gamepad.</strong> Every button can be rebound. In a two-player game the players take turns on one pad, as on the NES.</li>
+    <li><strong>Built-in updates.</strong> The Updates tab asks GitHub for a newer release only when you press it, and checks the download's SHA-256 before installing it.</li>
+  </ul>
+</section>
+
+<section id="downloads">
+  <h2>Downloads</h2>
+  <p>These links always fetch the latest release from GitHub.</p>
+  <table>
+    <thead><tr><th>System</th><th>Package</th></tr></thead>
+    <tbody>
+      <tr><td>Windows (64-bit)</td><td><a href="https://github.com/jp244btc/vs-smb-recomp/releases/latest/download/vssmb-win64.zip">vssmb-win64.zip</a>: unzip it and run <code>vssmb.exe</code></td></tr>
+      <tr><td>Linux (x86-64, glibc 2.34 or newer)</td><td><a href="https://github.com/jp244btc/vs-smb-recomp/releases/latest/download/vssmb-linux-x86_64.tar.gz">vssmb-linux-x86_64.tar.gz</a></td></tr>
+      <tr><td>Steam Deck</td><td><a href="https://github.com/jp244btc/vs-smb-recomp/releases/latest/download/vssmb-steamdeck.tar.gz">vssmb-steamdeck.tar.gz</a>: setup in <code>STEAMDECK.txt</code> inside</td></tr>
+      <tr><td>Android handhelds with built-in controls</td><td><a href="https://github.com/jp244btc/vs-smb-recomp/releases/latest/download/vssmb-android-handheld.apk">vssmb-android-handheld.apk</a></td></tr>
+      <tr><td>Android phones and tablets (on-screen controls)</td><td><a href="https://github.com/jp244btc/vs-smb-recomp/releases/latest/download/vssmb-android-phone.apk">vssmb-android-phone.apk</a></td></tr>
+    </tbody>
+  </table>
+  <p>The Android apps need Android 7 or newer. <a href="https://github.com/jp244btc/vs-smb-recomp/releases/latest/download/SHA256SUMS">SHA256SUMS</a> lists each package's SHA-256. What changed in each version: the <a href="https://github.com/jp244btc/vs-smb-recomp/releases">release notes</a>.</p>
+</section>
+
+<section id="getting-started">
+  <h2>Getting started</h2>
+  <ol>
+    <li>Run <code>vssmb.exe</code> on Windows or <code>vssmb</code> on Linux. On the Steam Deck follow <code>STEAMDECK.txt</code>; on Android install the APK and open it.</li>
+    <li>On the ROM tab choose <em>Choose ROM file...</em> and pick your <code>.nes</code> or <code>.zip</code> file, or drop it onto the window.</li>
+    <li>Go to Play &gt; Start game. The chosen file is remembered.</li>
+    <li>The cabinet starts on its PUSH BUTTON screen: press Start for one player (the 2 key starts a two-player game).</li>
+  </ol>
+  <p>Player guides: <a href="https://github.com/jp244btc/vs-smb-recomp/blob/main/docs/PLAYERS.md">Windows and Linux</a>, <a href="https://github.com/jp244btc/vs-smb-recomp/blob/main/docs/STEAMDECK.md">Steam Deck</a>, <a href="https://github.com/jp244btc/vs-smb-recomp/blob/main/docs/ANDROID.md">Android</a>.</p>
+</section>
+
+<section id="how-it-is-made">
+  <h2>How it is made</h2>
+  <p>A recompiler (<code>recomp/recomp.py</code>) translates the arcade's 6502 program into C ahead of time. The C is linked against a small runtime written for this project: the Vs. System's PPU with its RGB palette, the APU, the board's mapper, the coin slots and the DIP switches, plus an interpreter for any code the recompiler did not reach. The graphics, music and level data are read from your dump when the program starts, and the repository holds no game data or game code. Details are in the <a href="https://github.com/jp244btc/vs-smb-recomp#readme">README</a> and the <a href="https://github.com/jp244btc/vs-smb-recomp/blob/main/docs/ARCHITECTURE.md">architecture notes</a>.</p>
+</section>
+</main>
+
+<footer>
+  <p>The recompiler, runtime and frontend are open source under the <a href="https://github.com/jp244btc/vs-smb-recomp/blob/main/LICENSE">MIT licence</a>. The SNES sound unit behind the All-Stars music is <a href="https://github.com/angelo-wf/LakeSnes">LakeSnes</a>'s emulation (MIT licence).</p>
+  <p>VS. Super Mario Bros. and Super Mario All-Stars are trademarks and copyrights of Nintendo. This is an unofficial fan project, not affiliated with or endorsed by Nintendo. Do not share ROM files.</p>
+</footer>
+</div>
+</body>
+</html>
