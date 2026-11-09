@@ -145,12 +145,15 @@ pixels in a 16:9 window, 16 in the 16:10 view the Deck starts in, 42 with Intege
 filling the Deck's screen, 64 on a 1920x1080 one (at most 104). The screen still never
 scrolls back. Enemies and power-ups work there as on the screen: the game's own
 collision code decides a stomp, a hit, a kicked shell or a mushroom, run with both objects
-moved to where its 8-bit screen positions do not wrap. A score earned there shows at the
-screen's left edge. After a halfway restart or a pipe, the page drawn before the start
-gets its ground as well (the game itself only knows the level from the start page on).
-Not covered: riding a platform into the band, hammers and
-platforms touching him while he is wholly in it, and fireballs thrown from it (the
-game erases them at once as off the screen). `walk_to_edge=0` in `vssmb.ini` keeps
+moved to where its 8-bit screen positions do not wrap. His fireballs fly and bounce
+there and hit what they meet, enemies there bump each other and a kicked shell knocks
+them over, a vine there stays and can be climbed, firebars there burn as on the screen,
+and the coins and brick pieces of a block hit there show there. A score earned there
+shows at the screen's left edge. After a halfway restart or a pipe, the page drawn
+before the start gets its ground as well (the game itself only knows the level from the
+start page on). Not covered: riding a platform into the band, and hammers and platforms
+touching him while he is wholly in it; the game still erases things 72 pixels past the
+edge (only the widest views show that far). `walk_to_edge=0` in `vssmb.ini` keeps
 the game's own edge. A few instructions marked `patch` hand the game's state to
 `runtime/bandwalk.c` (`docs/ARCHITECTURE.md` has the details).
 
@@ -195,7 +198,11 @@ Verified (headless harness with scripted input and RAM pokes, screenshots inspec
   a Goomba's hit and a stomp there, the wall at an area's start, standing on the drawn
   page before a halfway restart, a Koopa stomped there and its shell kicked out through
   the picture or out through the band (stomp, kick, slide, points and the touching bit
-  frame for frame as the same stomp and kick in the picture); bit-identical between both paths with the patches working, the band's
+  frame for frame as the same stomp and kick in the picture) and knocking over a Goomba
+  there; Fire Mario's fireballs thrown both ways there, one hitting a Goomba there; a vine
+  scrolled into the band and climbed there; a brick broken there by big Mario; firebars
+  (one 256 pixels to his right, which must not touch him, and one in the band, which
+  does); bit-identical between both paths with the patches working, the band's
   sprites still the PPU's exactly (`--ws-oam-check`), and nothing changed with them off
   (the 9,000-frame session and the 40 level runs); a real 16:9 window and the Deck's
   1280x800 views (Fit 16 pixels, Integer 42) checked by screenshots

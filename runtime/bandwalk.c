@@ -20,8 +20,19 @@
  *  - collisions: his bounding box is clipped at the screen's left edge, as the game clips every
  *    other object's. An enemy or power-up the game skips because it is not wholly on the screen is
  *    tested when it or the player reaches beyond that edge, with both boxes moved for the test into
- *    an 8-bit frame where neither wraps, so the game's own rules decide (stomp, injury, power-up).
- *    Hammers and platforms do not touch him while he is wholly beside the screen.
+ *    an 8-bit frame where neither wraps, so the game's own rules decide (stomp, injury, power-up);
+ *    so are his fireballs against the enemies there, and the enemies there against each other
+ *    (bumping, a kicked shell). Hammers and platforms do not touch him while he is wholly beside
+ *    the screen.
+ *  - other objects beside the screen: his fireballs and a vine, which the game erases as soon as
+ *    they leave the screen, stay while they are in the band (a fireball still goes below the
+ *    screen, and both go once they have left the band); the vine stays climbable, and grabbing it
+ *    there gives him its page. Their sprites, a coin or score knocked out of a block and a brick's
+ *    chunks have their 8-bit X wrapped round to the right edge there; they are hidden in the real
+ *    frame, and the band draws them.
+ *  - firebars: one whose centre is in the band is processed as on the screen, its parts placed and
+ *    tested against him by their true places (the game's test of 8-bit X let one 256 pixels to his
+ *    right hurt him while he stood in the band).
  *  - scores: one for something beside the screen is shown at the screen's left edge.
  *  - the page before a part-way start (a halfway point, a pipe's entrance page): the game renders
  *    the area from its start page on, after clearing the whole block buffer, so the page before it,
@@ -70,10 +81,48 @@ int widescreen_walk = 0;
 #define P_LARGE_PLAT   0xDACA   /* BCC after a large platform's */
 #define P_SMALL_PLAT   0xDAF6   /* BCS after a small platform's */
 #define P_AREA_START   0x9687   /* InitializeArea: STA BackloadingFlag with the start page in A */
+#define P_FBALL_ERASE  0xB593   /* FireballObjCore: BNE to its erasure, its offscreen bits & $CC in A */
+#define P_FBALL_DRAWN  0xB51B   /* ProcFireball_Bubble: both fireballs moved and drawn (LDA AreaType) */
+#define P_FBALL_GATE   0xD66A   /* FireballEnemyCollision: BNE past an enemy not wholly on the screen */
+#define P_FBALL_TEST   0xD673   /* ... JSR SprObjectCollisionCore, Y = the fireball's box, X = the enemy's */
+#define P_FBALL_DONE   0xD676   /* ... after it */
+#define P_EE_GATE1     0xD9A5   /* EnemiesCollision: BNE out when this enemy is not wholly on the screen */
+#define P_EE_GATE2     0xD9C6   /* ... BNE past another enemy not wholly on the screen */
+#define P_EE_TEST      0xD9CF   /* ... JSR SprObjectCollisionCore, Y = this enemy's box, X = the other's */
+#define P_EE_DONE      0xD9D2   /* ... after it */
+#define P_VINE         0xB83C   /* VineObjectHandler: BEQ past the vine's erasure, its offscreen bits & $0C in A */
+#define P_VINE_LEFT    0xB878   /* VS.'s own vine check: BMI to its erasure when it is left of the screen */
+#define P_VINE_NEAR    0xB87C   /* ... BCS past it when it is 9 pixels or more from the screen's left edge */
+#define P_VINE_PAGE    0xDE13   /* PutPlayerOnVine: STA Player_PageLoc with ScreenRight_PageLoc + ClimbPLocAdder */
+#define P_MISC_DRAWN   0xADD9   /* GameEngine: the block and misc objects (chunks, jumping coins, points) drawn */
+#define P_FBAR_SKIP    0xCC87   /* ProcFirebar: BNE past it all, Enemy_OffscreenBits & 8 in A (its centre off the screen) */
+#define P_FBAR_CENTRE  0xCCC8   /* ... its centre's sprite written, Y = its offset (LDA #$01) */
+#define P_FBAR_WRAP    0xCD29   /* DrawFirebar_Collision: CMP #$59 with a part's distance from the centre in 8 bits */
+#define P_FBAR_PART    0xCD49   /* ... STA $07 just after the part's sprite Y (STA $0200,Y) */
+#define P_FBAR_EDGE    0xCD87   /* FirebarCollision: BCS past a part whose X ($06) is $F0 or more */
+#define P_FBAR_X       0xCD94   /* ... BPL with the player's sprite 1 X + 4 less the part's X in A */
+#define ENEMY_REL_X    0x03AE   /* Enemy_Rel_XPos */
+#define PART_X         0x0006   /* the firebar part's X while it is drawn and tested */
+#define MISC_STATE     0x002A   /* Misc_State: 0 none, d7 a hammer, else a jumping coin and then its points */
+#define MISC_SPR_OFS   0x06F3   /* Misc_SprDataOffset: their two sprites */
+#define MISC_OBJ       13       /* the misc objects' SprObject index (13-21) */
+#define BLOCK_STATE    0x0026   /* Block_State: 0 none, else a block bouncing or a brick's chunks */
+#define BLOCK_OBJ      9        /* the block objects' SprObject index (9, 10); their sprites at ALT_SPR_OFS */
+#define SCREEN_RIGHT_PAGE 0x071B
 #define COLLISION_BITS 0x0491   /* Enemy_CollisionBits: d0 = touching the player already */
+#define FBALL_STATE    0x0024   /* Fireball_State: 0 none, d7 exploding */
+#define FBALL_SPR_OFS  0x06F1   /* FBall_SprDataOffset: a flying fireball's sprite */
+#define ALT_SPR_OFS    0x06EC   /* Alt_SprDataOffset: its explosion's four */
+#define ENEMY_SPR_OFS  0x06E5   /* Enemy_SprDataOffset */
+#define VINE_PIECES    0x0398   /* VineFlagOffset: how many vine objects */
+#define VINE_SLOTS     0x039A   /* VineObjOffset: their enemy slots */
+#define FBALL_OBJ      7        /* the fireballs' SprObject index (7, 8) */
 static const uint16_t patched[] = { P_WALL, P_SCROLL, P_SPRITES, P_PLAYER_BOX, P_ENEMY_GATE, P_ENEMY_TEST,
                                     P_ENEMY_DONE, P_ENEMY_GATE2, P_SCORE_ENEMY, P_SCORE_PLAYER, P_HAMMER,
-                                    P_LARGE_PLAT, P_SMALL_PLAT, P_AREA_START };
+                                    P_LARGE_PLAT, P_SMALL_PLAT, P_AREA_START, P_FBALL_ERASE, P_FBALL_DRAWN,
+                                    P_FBALL_GATE, P_FBALL_TEST, P_FBALL_DONE, P_VINE, P_VINE_LEFT, P_VINE_NEAR,
+                                    P_VINE_PAGE, P_MISC_DRAWN, P_EE_GATE1, P_EE_GATE2, P_EE_TEST, P_EE_DONE,
+                                    P_FBAR_SKIP, P_FBAR_CENTRE, P_FBAR_WRAP, P_FBAR_PART, P_FBAR_EDGE, P_FBAR_X };
 
 /* Positions are page:pixel, 16 bits, measured from the screen's left edge as the game measures them,
    by a 16-bit difference: page $FF, a step left of an area's start, is left of a screen at page 0 */
@@ -138,13 +187,25 @@ static void patch_scroll(void) {
     if (rel < 0 || (cpu.a >= 0x80 && rel < 0x40)) cpu.a = (uint8_t)(rel < 0 ? 0 : rel);
 }
 
-static void patch_sprites(void) {
-    if (rel_x(0) >= 0) return;
-    /* beside the screen his columns' X wrapped round past 128; a column still on it is at 0-7 */
-    for (int k = 0; k < 8; k++) {
-        uint8_t *spr = ram + SPRITES + ((ram[PLAYER_SPR_OFS] + k * 4) & 0xFF);
+/* n sprites from offset ofs of an object beside the screen's left edge: those whose 8-bit X wrapped round
+   past 128 are hidden in the real frame (a column still on the screen is at 0-7); the band's run of the
+   engine, with the camera moved, draws them beside the picture */
+static void hide_wrapped(uint8_t ofs, int n) {
+    for (int k = 0; k < n; k++) {
+        uint8_t *spr = ram + SPRITES + ((ofs + k * 4) & 0xFF);
         if (spr[3] >= 0x80) spr[0] = 0xF8;
     }
+}
+
+/* object s is at the screen's left side, so that its horizontal offscreen bits are the left edge's (the
+   game counts its first columns as off the screen too), and not wholly beyond the band */
+static int left_in_band(int s) {
+    return rel_x(s) < 128 && screen_box(s).x1 >= -room();
+}
+
+static void patch_sprites(void) {
+    if (rel_x(0) >= 0) return;
+    hide_wrapped(ram[PLAYER_SPR_OFS], 8);
 }
 
 static void patch_player_box(void) {
@@ -209,6 +270,162 @@ static void patch_enemy_done(void) {
     moved.on = 0;
 }
 
+/* The player's fireballs. FireballObjCore erases one as soon as its offscreen bits say it is beside the
+   screen, so one thrown in the band, or flying into it, went at once. Beside the screen's left edge
+   within the band only its vertical bits count (it still goes below the screen, or once it has left the
+   band as at the screen's edge). DrawFireball writes its 8-bit X with no such test, so there it wraps
+   round to the right edge and is hidden once both are drawn. FireballEnemyCollision skips an enemy not
+   wholly on the screen: one in the band is tested, both boxes moved as for the player's test. */
+static void patch_fball_erase(void) {
+    if (!(cpu.a & 0x0C) || !left_in_band(FBALL_OBJ + ram[OBJECT_OFFSET])) return;
+    cpu.a &= 0xC0;
+    cpu.z = cpu.a == 0; cpu.n = (cpu.a & 0x80) != 0;
+}
+
+static void patch_fball_drawn(void) {
+    for (int k = 0; k < 2; k++) {
+        if (!ram[FBALL_STATE + k] || rel_x(FBALL_OBJ + k) >= 0) continue;
+        if (ram[FBALL_STATE + k] & 0x80) hide_wrapped(ram[ALT_SPR_OFS + k], 4);   /* its explosion */
+        else hide_wrapped(ram[FBALL_SPR_OFS + k], 1);
+    }
+}
+
+/* an enemy not wholly on the screen that the game skips, let through while it is in the band (the gates of
+   FireballEnemyCollision and EnemiesCollision, A = its masked offscreen bits, X = its slot); one partly
+   above or below the screen (a vertical bit, d4-d7) is skipped there as anywhere */
+static void patch_object_gate(void) {
+    if (cpu.a == 0 || (cpu.a & 0xF0) || !left_in_band(cpu.x + 1)) return;
+    cpu.a = 0; cpu.z = 1; cpu.n = 0;
+}
+
+/* the test of two objects' boxes (SprObjectCollisionCore with Y and X their box offsets), moved for it into an
+   8-bit frame where neither wraps when either is beside the screen, and put back after it */
+static struct { int on, ofs[2]; uint8_t saved[2][4]; } pmoved;
+
+static void move_pair(int obj_y, int obj_x) {
+    box_t b[2] = { screen_box(obj_y), screen_box(obj_x) };
+    int ofs[2] = { cpu.y, cpu.x };
+    pmoved.on = 0;
+    if (b[0].x0 >= 0 && b[1].x0 >= 0) return;      /* both on the screen: the game's own boxes */
+    int origin = (b[0].x0 < b[1].x0 ? b[0].x0 : b[1].x0) - 8;
+    int far = b[0].x1 > b[1].x1 ? b[0].x1 : b[1].x1;
+    if (far - origin > 255) return;
+    pmoved.on = 1;
+    for (int k = 0; k < 2; k++) {
+        uint8_t *o = ram + BOX + ofs[k];
+        pmoved.ofs[k] = ofs[k];
+        memcpy(pmoved.saved[k], o, 4);
+        o[0] = (uint8_t)(b[k].x0 - origin); o[1] = (uint8_t)b[k].y0;
+        o[2] = (uint8_t)(b[k].x1 - origin); o[3] = (uint8_t)b[k].y1;
+    }
+}
+
+static void put_back_pair(void) {
+    if (!pmoved.on) return;
+    for (int k = 0; k < 2; k++) memcpy(ram + BOX + pmoved.ofs[k], pmoved.saved[k], 4);
+    pmoved.on = 0;
+}
+
+/* Y = the fireball's box, X = the enemy's; $01 = the enemy's slot */
+static void patch_fball_test(void) { move_pair(FBALL_OBJ + ram[OBJECT_OFFSET], ram[0x01] + 1); }
+
+/* EnemiesCollision: the enemies bump or a kicked shell knocks one over only on the screen, so a shell sliding
+   in the band went through what it met there. Y = the enemy's box (ObjectOffset), X = the other's ($01) */
+static void patch_enemies_test(void) { move_pair(ram[OBJECT_OFFSET] + 1, ram[0x01] + 1); }
+
+/* A vine (VineObjectHandler, enemy slot 5 with up to three objects) is erased as soon as its offscreen
+   bits say it is beside the screen, and VS. adds a check of its own after it ($B86C): within 9 pixels
+   of the screen's left edge or left of it, the vine goes and its climbing metatiles with it. So one
+   the screen scrolled past left the band at once. Within the band it stays (and keeps writing its
+   climbing metatile to the block buffer); its sprites, drawn just before with their 8-bit X wrapped
+   round to the right edge, are hidden in the real frame. */
+static int vine_in_band(void) {
+    int x = rel_x(ram[OBJECT_OFFSET] + 1);         /* the vine's own slot (5) */
+    return x < 128 && x + 14 >= -room();            /* its sprites are 14 pixels wide */
+}
+
+static void patch_vine(void) {
+    if (cpu.a == 0 || !vine_in_band()) return;
+    for (int k = 0; k < ram[VINE_PIECES] && k < 3; k++) hide_wrapped(ram[ENEMY_SPR_OFS + ram[VINE_SLOTS + k]], 6);
+    cpu.a = 0; cpu.z = 1; cpu.n = 0;
+}
+
+static void patch_vine_left(void) {
+    if (vine_in_band()) cpu.n = 0;
+}
+
+static void patch_vine_near(void) {
+    if (vine_in_band()) cpu.c = 1;
+}
+
+/* the player grabs a vine at the first column of an even page (its block buffer address' low byte 0):
+   PutPlayerOnVine takes his page from the screen's right edge, which is the vine's page only while the
+   vine is on the screen; beside its left edge it is the vine's own page, else he would land 256 pixels on */
+static void patch_vine_page(void) {
+    if (ram[ENEMY_FLAG + 5] && ram[ENEMY_ID + 5] == 0x2F && rel_x(6) < 0)   /* the vine (slot 5) beside the screen */
+        cpu.a = (uint8_t)(cpu.a - ram[SCREEN_RIGHT_PAGE] + ram[OBJ_PAGE + 6]);
+}
+
+/* a block hit beside the screen: the coin knocked out of it (and the points it turns into), which
+   JCoinGfxHandler draws with no offscreen test, and a brick's chunks, which DrawBrickChunks hides only
+   as for a block at the screen's edges, have their 8-bit X wrapped round to the right edge; hidden in
+   the real frame, the band's run draws them in place (a block bouncing hides itself, and hammers erase
+   themselves off the screen) */
+static void patch_objects_drawn(void) {
+    for (int k = 0; k < 2; k++)
+        if (ram[BLOCK_STATE + k] && rel_x(BLOCK_OBJ + k) < 0) hide_wrapped(ram[ALT_SPR_OFS + k], 4);
+    for (int k = 0; k < 9; k++) {
+        uint8_t st = ram[MISC_STATE + k];
+        if (st && !(st & 0x80) && rel_x(MISC_OBJ + k) < 0) hide_wrapped(ram[MISC_SPR_OFS + k], 2);
+    }
+}
+
+/* Firebars. ProcFirebar skips one whose centre is off the screen, and DrawFirebar_Collision hides a part
+   whose 8-bit X is 89 pixels or more from the centre's (one that wrapped round the screen), so one in the
+   band was drawn there by the band's run of the engine but touched nothing, and the parts of one on the
+   screen that reach into the band were hidden. FirebarCollision then tests the player's sprite 1 X (last
+   frame's, 8 bits) against the part's: beside the screen it wraps, and a part 256 pixels to his right hurt
+   him. Within the band the firebar is processed, a part is placed by its true place (beyond the band it is
+   hidden, past the right edge the game's own test hides it), its sprite and the centre's hidden in the real
+   frame where they wrapped (the band draws them), and the test made by their true places. */
+static int fbar_part_x(void) {   /* the part's X ($06) from the screen's left edge, by its centre's */
+    int c = rel_x(ram[OBJECT_OFFSET] + 1);
+    return c + (int8_t)(uint8_t)(ram[PART_X] - (uint8_t)c);
+}
+
+static void patch_fbar_skip(void) {
+    int c = rel_x(cpu.x + 1);
+    if (cpu.a == 0 || c >= 128 || c < -room() - 88) return;   /* parts reach 88 pixels from the centre */
+    cpu.a = 0; cpu.z = 1; cpu.n = 0;
+}
+
+static void patch_fbar_centre(void) {
+    if (rel_x(ram[OBJECT_OFFSET] + 1) < 0) ram[SPRITES + cpu.y] = 0xF8;
+}
+
+static void patch_fbar_wrap(void) {
+    int f = fbar_part_x();
+    if (rel_x(ram[OBJECT_OFFSET] + 1) >= 0 && f >= 0) return;   /* the game's own test */
+    cpu.a = f >= -room() - 8 && f < 256 ? 0x00 : 0xFF;
+}
+
+static void patch_fbar_part(void) {
+    if (fbar_part_x() < 0) ram[SPRITES + cpu.y] = 0xF8;
+}
+
+static void patch_fbar_edge(void) {
+    if (fbar_part_x() < 0) cpu.c = 0;
+}
+
+static void patch_fbar_x(void) {
+    int f = fbar_part_x(), p = rel_x(0);
+    if (p >= 0 && f >= 0) return;                   /* both on the screen: the 8-bit difference is the true one */
+    int s = p + (int8_t)(uint8_t)(ram[SPRITES + 7] - (uint8_t)p);   /* sprite 1 X, by his place */
+    int d = s + 4 - f;
+    if (d > -8 && d < 8) return;                    /* touching: the game's test says so too */
+    cpu.a = 0x80; cpu.n = 1; cpu.z = 0;             /* far apart: as a difference of 128 */
+}
+
 static void patch_score_enemy(void) {
     if (rel_x(ram[OBJECT_OFFSET] + 1) < 0) cpu.a = 0;
 }
@@ -244,6 +461,23 @@ static void bandwalk_patch(uint16_t pc) {
     case P_SCORE_PLAYER: patch_score_player(); break;
     case P_HAMMER: case P_LARGE_PLAT: case P_SMALL_PLAT: patch_wholly_beside(); break;
     case P_AREA_START: patch_area_start(); break;
+    case P_FBALL_ERASE: patch_fball_erase(); break;
+    case P_FBALL_DRAWN: patch_fball_drawn(); break;
+    case P_FBALL_GATE: case P_EE_GATE1: case P_EE_GATE2: patch_object_gate(); break;
+    case P_FBALL_TEST: patch_fball_test(); break;
+    case P_EE_TEST: patch_enemies_test(); break;
+    case P_FBALL_DONE: case P_EE_DONE: put_back_pair(); break;
+    case P_VINE: patch_vine(); break;
+    case P_VINE_LEFT: patch_vine_left(); break;
+    case P_VINE_NEAR: patch_vine_near(); break;
+    case P_VINE_PAGE: patch_vine_page(); break;
+    case P_MISC_DRAWN: patch_objects_drawn(); break;
+    case P_FBAR_SKIP: patch_fbar_skip(); break;
+    case P_FBAR_CENTRE: patch_fbar_centre(); break;
+    case P_FBAR_WRAP: patch_fbar_wrap(); break;
+    case P_FBAR_PART: patch_fbar_part(); break;
+    case P_FBAR_EDGE: patch_fbar_edge(); break;
+    case P_FBAR_X: patch_fbar_x(); break;
     default: break;
     }
 }

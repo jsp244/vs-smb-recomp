@@ -267,7 +267,7 @@ which wrap round to the right edge once he is left of it. Instructions marked
 generated code through `PATCH(addr)`, the interpreter and the sandbox through
 `sys_patch_map` (a bit per address). Unlike a hook a patch may change registers,
 flags and memory, so it may depend only on the machine and the settings.
-`runtime/bandwalk.c` installs fourteen, which change nothing while
+`runtime/bandwalk.c` installs thirty-four, which change nothing while
 `widescreen_walk` is 0; the frontend sets it every frame to the band its view
 shows on the left (whole columns where Integer filling the screen cuts the
 outermost one), and `nes-headless --ws-walk N` sets it for tests.
@@ -283,10 +283,23 @@ outermost one), and `nes-headless --ws-walk N` sets it for tests.
 | `$D978`, `$D4E8` SetupFloateyNumber | a score for something beside the screen is shown at its left edge |
 | `$D734`, `$DACA`, `$DAF6` | a hammer or platform does not touch him while he is wholly beside the screen (his box is then the game's empty one at the edge) |
 | `$9687` InitializeArea | at a part-way start (the start page in A) the page before it gets its collision: InitializeArea cleared the block buffer ($0500-$069F, 13 rows of 16 metatiles per page parity) and the game renders from the start page on, so `widescreen_fill_collision` copies the last 128 pixels of the band's rendering of that page (`make_fill`'s block buffer) into the game's. Those slots belong to the next page's last columns only once the parser is 512 pixels past them, out of reach. Without that copy (the walk switched on later in the area) the wall stays at the start page |
+| `$B593` FireballObjCore | a fireball beside the screen's left edge, its box still within the band, has only its vertical offscreen bits counted, so it flies and bounces on there (it still goes below the screen, and once it has left the band); the game's own bits include the screen's first 8 pixels, so without this one thrown there went at once |
+| `$B51B` ProcFireball_Bubble | a fireball's sprite (or its explosion's four) that wrapped to the right edge is hidden; the band draws it |
+| `$D66A` FireballEnemyCollision, `$D9A5` / `$D9C6` EnemiesCollision | an enemy the game skips as not wholly on the screen is let through while it is in the band (not one partly above or below the screen) |
+| `$D673` / `$D676`, `$D9CF` / `$D9D2` around SprObjectCollisionCore | both boxes are moved for the test as for the player's: a fireball hits an enemy in the band, enemies there turn at each other, and a kicked shell knocks them over |
+| `$B83C` VineObjectHandler, `$B878` / `$B87C` | a vine in the band is kept: SMB's offscreen test erases it, and VS. adds a check of its own after it ($B86C) that erases one left of the screen or within 9 pixels of its edge, with its climbing metatiles; its sprites that wrapped are hidden |
+| `$DE13` PutPlayerOnVine | a vine grabbed at an even page's first column (block buffer address low byte 0) gives him the vine's page, not the screen's right edge's, while it is beside the screen |
+| `$ADD9` GameEngine | a coin knocked out of a block there (and its score) and a brick's chunks: the sprites JCoinGfxHandler and DrawBrickChunks wrapped to the right edge are hidden; the band draws them |
+| `$CC87` ProcFirebar, `$CCC8` | a firebar whose centre is off the screen's left side is processed while its parts can reach the band (ProcFirebar skips it otherwise); its centre's sprite is hidden in the real frame where it wrapped |
+| `$CD29` / `$CD49` DrawFirebar_Collision | a part is shown or hidden by its true place (within the band or on the screen), not by its 8-bit distance from the centre, which hid the parts reaching across the screen's edge; a part's sprite beside the screen is hidden in the real frame (its Y in $07 kept for the test) |
+| `$CD87` / `$CD94` FirebarCollision | a part beside the screen is tested (the game skips one at X $F0 or more), and the player's sprite 1 X against the part's by their true places: the 8-bit difference let a part 256 pixels to his right hurt him while he stood in the band |
 
 The screen still never scrolls back. `tests/cosim.py --walk N` (a death and a stomp in the
 band, the area's start, a halfway restart, a Koopa stomped in the band and its shell kicked
-out through the picture and out through the band) stays bit-identical with the patches working, and the band's repeat of the engine still builds the PPU's
+out through the picture and out through the band and into a Goomba there, fireballs thrown
+both ways in the band and one hitting a Goomba there, a vine scrolled into the band and
+climbed there, a brick broken there, and two firebars: one 256 pixels to his right that
+must not touch him, one in the band that does) stays bit-identical with the patches working, and the band's repeat of the engine still builds the PPU's
 sprites exactly (`--ws-oam-check`); with `widescreen_walk` 0 the standard session
 and the 40 level runs are unchanged.
 
@@ -636,9 +649,12 @@ vignette; then the target is drawn to the window either 1:1, scaled, or as a
   past the old edge, where the game creates them; spawning them earlier would change
   the game itself. Hammer Bros and Piranha Plants are erased 16 pixels into the left
   band, as the game erases them.
-* Walking into the band: riding a platform into it, hammers and platforms touching
-  the player there, and his fireballs (the game erases one thrown from the band at
-  once, as off the screen) would each need patches of their own: their positions,
-  sprites and boxes wrap the way his do.
+* Walking into the band: riding a platform into it, and hammers and platforms touching
+  the player while he is wholly in it, would each need patches of their own: their
+  positions, sprites and boxes wrap the way his do. Hammers erase themselves off the
+  screen; cannons fire only while on it; anything 72 pixels past the edge is erased
+  (OffscreenBoundsCheck), as the game erases it, which only views wider than that show;
+  fireballs still go at the screen's right edge (the right band shows the level ahead,
+  where the game has made nothing for them to hit).
 * Keeping the top score between sessions (the board keeps it only while powered).
 * A 2P start button on the phone edition's on-screen controller.

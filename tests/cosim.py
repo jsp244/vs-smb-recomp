@@ -56,8 +56,19 @@ def level_keys(frames):
 # after a restart at a halfway page (poked to 4 while the first Goomba kills him) walking into the page
 # drawn before it, which gets its collision as the area starts; and that Goomba made a Koopa (its Enemy_ID
 # poked as it appears), stomped in the band, its shell kicked there by the landing after the bounce: out
-# through the picture, and (drifting right in the bounce, so he lands on its far side) out through the band
+# through the picture, and (drifting right in the bounce, so he lands on its far side) out through the band,
+# knocking over a Goomba put there (the first one's slot copied to another as the shell is kicked).
+# Fire Mario (poked) in the band throwing a fireball left, out through the band, and right at that Goomba
+# as it reaches the band; a vine (enemy slot 5 set up as a vine block does it) grown on the screen, scrolled
+# into the band and climbed there; big Mario (poked) jumping back over the first pipe into the band and
+# breaking a brick there; two firebars (enemy slots set up as the game sets one up) while he stands in the
+# band: one 256 pixels to his right, at the height of his feet, which must not touch him (the game tests
+# 8-bit X), and one centred in the band, which does as he walks into it.
 KOOPA = "400:SELECT;404:-;640:RIGHT;780:LEFT;880:-;1200:A;1206:-"
+BAND_GOOMBA = "1236:10=01,17=06,1F=00,47=01,59=08,6F=00,88=48,B7=01,D0=B8,A2=00,49B=09,3C6=00"
+VINE = "770:14=1,1B=2F,1E=0,73=1,8C=4,D4=B0,39A=5,398=1,399=0,39D=B0;800:F=0"
+FIREBARS = ("762:F=0;1000:13=1,1A=1B,72=1,8B=38,D3=C8,BA=1,22=0,38C=28,A4=0,5C=0,38=0;"
+            "1300:12=1,19=1B,71=0,8A=5C,D2=C8,B9=1,21=0,38B=28,A3=0,5B=0,37=0")
 WALK_SCENARIOS = {
     "death": (1500, "400:SELECT;404:-;640:RIGHT;780:LEFT;1000:-", ""),
     "stomp": (2600, "400:SELECT;404:-;640:RIGHT;780:LEFT;1000:-;1234:A;1242:-;1320:RIGHT+B;1350:RIGHT+B+A;"
@@ -69,7 +80,15 @@ WALK_SCENARIOS = {
                       "1640:RIGHT+B;1680:RIGHT+B+A;1720:RIGHT+B;1800:LEFT",
                 ";".join(f"{f}:75B=4" for f in range(1000, 1130, 2))),
     "kick": (1600, KOOPA + ";1300:RIGHT+B;1340:RIGHT+B+A;1370:RIGHT+B", "762:16=0"),
-    "kick-left": (1600, KOOPA + ";1226:RIGHT;1246:-;1300:RIGHT+B;1340:RIGHT+B+A;1370:RIGHT+B", "762:16=0"),
+    "kick-left": (1600, KOOPA + ";1226:RIGHT;1246:-;1300:RIGHT+B;1340:RIGHT+B+A;1370:RIGHT+B",
+                  "762:16=0;" + BAND_GOOMBA),
+    "fireball": (1400, "400:SELECT;404:-;640:RIGHT;780:LEFT;900:LEFT+B;904:LEFT;1000:-;1168:RIGHT;1170:-;"
+                       "1210:B;1214:-;1300:RIGHT+B", "650:754=0,756=2"),
+    "vine": (1500, "400:SELECT;404:-;640:RIGHT;750:-;960:RIGHT+B;1110:-;1140:LEFT;1246:LEFT+A;1264:LEFT+UP;"
+                   "1286:UP;1446:-", VINE),
+    "blocks": (1300, "400:SELECT;404:-;640:RIGHT+B;798:RIGHT+B+A;824:LEFT;834:-;910:LEFT;930:LEFT+A;956:LEFT;"
+                     "1020:A;1036:-;1100:RIGHT", "650:754=0,756=1;762:F=0"),
+    "firebar": (1500, "400:SELECT;404:-;640:RIGHT;780:LEFT;1000:-;1310:RIGHT;1340:-", FIREBARS),
 }
 
 

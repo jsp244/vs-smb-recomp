@@ -25,3 +25,23 @@ D4E8 PlayerScoreX patch         ; the same with the player's screen X
 D734 HammerTested patch         ; BCC after a hammer's test against the player
 DACA LargePlatTested patch      ; BCC after a large platform's test against the player
 DAF6 SmallPlatTested patch      ; BCS after a small platform's test against the player
+B593 FireballOffscrErase patch  ; FireballObjCore: BNE to its erasure with its offscreen bits (kept within the band)
+B51B FireballsDrawn patch       ; ProcFireball_Bubble: both fireballs drawn (one beside the screen hidden where it wrapped)
+D66A FireballEnemySkip patch    ; FireballEnemyCollision: BNE past an enemy not wholly on the screen
+D673 FireballBoxTest patch      ; ... JSR SprObjectCollisionCore (boxes moved where they do not wrap)
+D676 FireballBoxTested patch    ; ... after it (boxes put back)
+B83C VineOffscrErase patch      ; VineObjectHandler: BEQ past the vine's erasure with its offscreen bits (kept within the band)
+B878 VineLeftErase patch        ; VS.'s own vine check: BMI to its erasure when it is left of the screen
+B87C VineEdgeErase patch        ; ... BCS past it when it is 9 pixels or more from the screen's left edge
+DE13 VineClimbPage patch        ; PutPlayerOnVine: STA Player_PageLoc from the screen's right edge (a vine beside the screen: its own page)
+ADD9 MiscObjectsDrawn patch     ; GameEngine: block and misc objects drawn (chunks, coins beside the screen hidden where they wrapped)
+D9A5 EnemiesOffscrSkip patch    ; EnemiesCollision: BNE out when this enemy is not wholly on the screen
+D9C6 OtherEnemyOffscrSkip patch ; ... BNE past another enemy not wholly on the screen
+D9CF EnemiesBoxTest patch       ; ... JSR SprObjectCollisionCore (boxes moved where they do not wrap)
+D9D2 EnemiesBoxTested patch     ; ... after it (boxes put back)
+CC87 FirebarOffscrSkip patch    ; ProcFirebar: BNE past it all when its centre is off the screen (kept within the band)
+CCC8 FirebarCentreDrawn patch   ; ... its centre's sprite written (hidden where it wrapped)
+CD29 FirebarPartWrap patch      ; DrawFirebar_Collision: CMP #$59 with a part's 8-bit distance from the centre (its true place in the band)
+CD49 FirebarPartDrawn patch     ; ... STA $07 after a part's sprite Y (hidden where it wrapped)
+CD87 FirebarPartEdge patch      ; FirebarCollision: BCS past a part at X $F0 or more (one beside the screen is tested)
+CD94 FirebarPlayerX patch       ; ... BPL with the player's sprite X less the part's (their true places beside the screen)
