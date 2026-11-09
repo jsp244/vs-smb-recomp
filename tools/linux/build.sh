@@ -19,6 +19,7 @@ ROM=$(ls rom/*.nes rom/*.zip 2>/dev/null | head -n 1 || true)
 if [ -n "$ROM" ]; then
     echo "== cosimulation (interpreter vs native code)"
     python3 tests/cosim.py --frames 3000
+    python3 tests/cosim.py --frames 3000 --reset 2000
     python3 tests/cosim.py --walk 42
     # no display in a container: SDL's offscreen video and dummy audio drivers
     export SDL_VIDEODRIVER=offscreen SDL_AUDIODRIVER=dummy
@@ -29,6 +30,7 @@ if [ -n "$ROM" ]; then
         ./$b/vssmb --touch-test | tail -n 1
         ./$b/vssmb "$ROM" --chord-test | tail -n 1
         ./$b/vssmb "$ROM" --rewind-test 1200 | grep rewind-test
+        ./$b/vssmb "$ROM" --reset-test 3000 | tail -n 1
         ./$b/vssmb "$ROM" --ui-shot "/tmp/ui-$b.png" 1 60 | grep ui-shot
         grep -E "^(display_mode|aspect|scaling|resolution)=" $b/vssmb.ini | tr '\n' ' '; echo
         ./$b/vssmb --update-check | tail -n 2 || true   # the Updates tab's check (needs the network)

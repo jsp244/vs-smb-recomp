@@ -474,12 +474,14 @@ make test                          # blargg suites through $6000 status reportin
 make headless-recomp               # harness with the recompiled code linked in
 python tests/cosim.py              # interpreter vs native, a 9,000-frame coin-op session
 python tests/cosim.py --levels     # interpreter vs native in every world (about 3.5 minutes)
+python tests/cosim.py --reset 3000,6000   # ... with the reset button pressed twice in the session
 build/nes-headless-recomp --rom rom/*.nes --recomp --frames 9000 --ws-oam-check
                                    # the re-run engine must build the PPU's sprites exactly
 sh tests/run_ui_bind_test.sh       # menu rebinding and text rows (synthetic events)
 sh tests/run_updater_test.sh       # the updater offline: checksums, packages, every refusal
 build/vssmb rom/*.nes --rewind-test 1200   # whole rewind path: every re-run frame must match
 build/vssmb rom/*.nes --chord-test         # the Start + Select rollback
+build/vssmb rom/*.nes --reset-test 20000   # Play > Reset game after 20,000 frames: instant, game restarts
 build/vssmb --update-check                 # what the Updates tab's check finds (online)
 ```
 
@@ -490,7 +492,8 @@ folder as if the build were that older version, then starts the installed progra
 The headless harness (`build/nes-headless --help`) scripts input
 (`--keys "300:COIN;304:-;400:SELECT"`; `2A`, `2SELECT` ... for the second controller),
 sets DIP switches (`--dip 07` = free play), writes memory before a frame (`--poke
-"405:75F=3,760=0"`), dumps PNG screenshots every N frames, writes WAV audio, records
+"405:75F=3,760=0"`), presses the reset button before frames (`--reset 3000,6000`, each one
+timed), dumps PNG screenshots every N frames, writes WAV audio, records
 coverage (`--coverage FILE`), traces every instruction and dumps RAM. With `--allstars
 ROM` it also writes the remastered picture (`--allstars-png FILE`, `--allstars-wide FILE`
 for the widescreen canvas; numbered with `--png-every`) and can dump the SNES sandboxes

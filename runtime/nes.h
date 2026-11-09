@@ -308,7 +308,8 @@ void    mapper_set_mirroring(int mode);    /* 0=H 1=V 2=single lo 3=single hi 4=
 uint8_t *mapper_chr_bank_ptr(uint32_t bank1k); /* data of a 1 KiB CHR bank (ROM or RAM) */
 
 /* ppu.c */
-void    ppu_reset(void);
+void    ppu_power(void);                   /* power-on: everything cleared */
+void    ppu_reset(void);                   /* reset button: registers and memories cleared, the clock runs on */
 void    ppu_run_to(uint64_t target_dots);
 uint8_t ppu_reg_read(int reg);
 void    ppu_reg_write(int reg, uint8_t v);

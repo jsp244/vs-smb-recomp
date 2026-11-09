@@ -17,14 +17,15 @@ void nes_power(void) {
     sys.pad_shift[0] = sys.pad_shift[1] = 0;
     sys.strobe = false;
     mapper_init();
-    ppu_reset();
+    ppu_power();
     apu_reset();
     cpu_power();
     sys_sync();
 }
 
 void nes_reset(void) {
-    /* RESET: mapper and PPU registers restart; APU keeps its timers, CPU keeps RAM */
+    /* RESET: mapper and PPU registers restart (the PPU's clock runs on, so this takes no time
+       however long the machine has been on); APU keeps its timers, CPU keeps RAM */
     mapper_reset();
     ppu_reset();
     apu_write(0x4015, 0);

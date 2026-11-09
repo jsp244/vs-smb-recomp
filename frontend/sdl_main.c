@@ -2155,9 +2155,10 @@ static int trigger_selftest(void) {
 
 static void usage(void) {
     printf("usage: vssmb [rom.nes | suprmrio.zip] [--play] [--selftest N out.png] [--ui-shot out.png [tab [frames]]]\n"
-           "             [--game-shot out.png [frames] [--state-load state]] [--rewind-test N] [--list-controllers [out.txt]]\n"
-           "             [--list-modes [out.txt]] [--chord-test] [--trigger-test] [--stats out.txt]\n"
+           "             [--game-shot out.png [frames] [--state-load state]] [--rewind-test N] [--reset-test N]\n"
+           "             [--list-controllers [out.txt]] [--list-modes [out.txt]] [--chord-test] [--trigger-test] [--stats out.txt]\n"
            "             [--touch] [--touch-test] [--quit-after frames] [--update-check] [--update-test VERSION [args...]]\n"
+           "  --reset-test N: Play > Reset game after N frames must be instant and restart the game.\n"
            "  --update-check: what the Updates tab's check finds. --update-test: the same as if this build were\n"
            "  VERSION, then installs the newest release over this program and starts it with args (scratch folders only)\n");
 }
@@ -2246,6 +2247,46 @@ static int rewind_selftest(int frames) {
     return ok ? 0 : 1;
 }
 
+/* --reset-test N: N frames of the attract mode, then Play > Reset game through the menu's own action,
+   timed. The reset must take far less than a frame however long the game ran (it used to run every PPU
+   dot since power-on again: ~0.17 ms per frame played, over half a minute after an hour), keep the PPU's
+   frame count (the remastered graphics count frames across it) and its clock at the CPU's x 3, and start
+   the game over: the CPU at the reset vector, the picture off and soon on again, the game's frame counter
+   ($09) set up again from 0 and then counting every frame */
+static int reset_selftest(int frames) {
+    int failures = 0, back_on = 0, counting = 0;
+    char msg[200];
+#define CHECK(cond, text) do { int c_ = (cond); printf("%s %s\n", c_ ? "ok:  " : "FAIL:", text); if (!c_) failures++; } while (0)
+    for (int i = 0; i < frames; i++) nes_run_frame();
+    apu_flush_samples();
+    uint64_t frame0 = ppu.frame;
+    uint8_t counter0 = ram[0x09], counter30 = 0;
+    uint64_t t0 = SDL_GetPerformanceCounter();
+    menu_action((ui_event){ UI_EV_ACTIVATE, ACT_RESET });
+    double ms = (double)(SDL_GetPerformanceCounter() - t0) * 1000.0 / (double)SDL_GetPerformanceFrequency();
+    snprintf(msg, sizeof msg, "Play > Reset game after %d frames took %.3f ms (less than a frame)", frames, ms);
+    CHECK(ms < 16.0, msg);
+    CHECK(ppu.frame == frame0, "the PPU's frame count goes on (not counted again from power-on)");
+    CHECK(ppu.dots == cpu.cycles * 3, "the PPU's clock is still the CPU's x 3");
+    CHECK(state == ST_GAME && cpu.pc == mem_read16(0xFFFC) && (ppu.mask & 0x18) == 0,
+          "the game runs from the reset vector, with the PPU's registers reset (picture off)");
+    for (int i = 1; i <= 600; i++) {
+        uint8_t prev = ram[0x09];
+        nes_run_frame();
+        apu_flush_samples();
+        if (!back_on && (ppu.mask & 0x18)) back_on = i;
+        if (i == 30) counter30 = ram[0x09];
+        if (i > 500) counting += ram[0x09] == (uint8_t)(prev + 1);
+    }
+    CHECK(ppu.frame == frame0 + 600, "after it, one PPU frame per frame run");
+    snprintf(msg, sizeof msg, "the game started over: the picture on again %d frames after the reset, its frame counter at %d "
+             "30 frames after it (%d without the reset), then counting every frame", back_on, counter30, (uint8_t)(counter0 + 30));
+    CHECK(back_on > 0 && back_on < 60 && counter30 < 30 && counter30 != (uint8_t)(counter0 + 30) && counting == 100, msg);
+#undef CHECK
+    printf("reset-test: %s (%d failure%s)\n", failures ? "FAILED" : "all passed", failures, failures == 1 ? "" : "s");
+    return failures ? 1 : 0;
+}
+
 int main(int argc, char **argv) {
 #ifdef _WIN32
     attach_parent_console();
@@ -2253,7 +2294,7 @@ int main(int argc, char **argv) {
     const char *rom_arg = NULL, *selftest_png = NULL, *uishot_png = NULL, *gameshot_png = NULL, *list_pads_file = NULL, *stats_path = NULL;
     const char *allstars_arg = NULL;
     const char *shot_state = NULL;
-    int selftest_frames = 0, uishot_tab = 0, uishot_frames = 0, gameshot_frames = 300, rewind_test = 0, list_pads = 0, autoplay = 0;
+    int selftest_frames = 0, uishot_tab = 0, uishot_frames = 0, gameshot_frames = 300, rewind_test = 0, reset_test = 0, list_pads = 0, autoplay = 0;
     const char *list_modes_file = NULL;
     int list_modes_flag = 0, chord_test = 0, touch_flag = 0, touch_test = 0, quit_after = 0;
     const char *update_pretend = NULL;
@@ -2300,6 +2341,7 @@ int main(int argc, char **argv) {
         }
         else if (!strcmp(argv[i], "--state-load") && i + 1 < argc) shot_state = argv[++i];
         else if (!strcmp(argv[i], "--rewind-test") && i + 1 < argc) rewind_test = atoi(argv[++i]);
+        else if (!strcmp(argv[i], "--reset-test") && i + 1 < argc) reset_test = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--chord-test")) chord_test = 1;
         else if (!strcmp(argv[i], "--trigger-test")) trigger_test_flag = 1;
         else if (!strcmp(argv[i], "--touch")) touch_flag = 1;   /* the phone edition: on-screen controls */
@@ -2480,6 +2522,12 @@ int main(int argc, char **argv) {
     if (rewind_test > 0) {
         if (!rom_ok) { fprintf(stderr, "rewind-test: no valid ROM (%s)\n", rom_status); SDL_Quit(); return 1; }
         int rc = rewind_selftest(rewind_test);
+        font_quit(); SDL_DestroyRenderer(renderer); SDL_DestroyWindow(window); SDL_Quit();
+        return rc;
+    }
+    if (reset_test > 0) {
+        if (!rom_ok) { fprintf(stderr, "reset-test: no valid ROM (%s)\n", rom_status); SDL_Quit(); return 1; }
+        int rc = reset_selftest(reset_test);
         font_quit(); SDL_DestroyRenderer(renderer); SDL_DestroyWindow(window); SDL_Quit();
         return rc;
     }

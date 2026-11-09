@@ -46,12 +46,26 @@ void ppu_update_nmi(void) {
     cpu.nmi_line = level;
 }
 
-void ppu_reset(void) {
+/* power-on: every register, memory and counter starts at zero */
+void ppu_power(void) {
     memset(&ppu, 0, sizeof ppu);
-    ppu.scanline = 0;
-    ppu.dot = 0;
-    ppu.odd_frame = false;
     mapper_set_mirroring(cart.four_screen ? 4 : (cart.mirroring ? 1 : 0));
+}
+
+/* the reset button: the registers and memories start over as at power-on, but the PPU's clock runs
+   on. Its place in the frame, the frame count and the dots since power-on stay, so ppu.dots is still
+   cpu.cycles * 3 and the next sync only runs the dots of the CPU's reset sequence. (Starting the dot
+   count at 0 again made that sync replay every dot since power-on: a freeze of ~0.17 ms per frame
+   played.) Frame counters such as the remastered graphics' and widescreen.c's go on as in play. */
+void ppu_reset(void) {
+    uint64_t dots = ppu.dots, frame = ppu.frame;
+    int scanline = ppu.scanline, dot = ppu.dot;
+    bool odd_frame = ppu.odd_frame;
+    ppu_power();
+    ppu.dots = dots; ppu.frame = frame;
+    ppu.scanline = scanline; ppu.dot = dot; ppu.odd_frame = odd_frame;
+    /* the banks the next frame's background starts with, as the replay used to leave them */
+    memcpy(ppu.frame_chr_bank, mapper.chr_bank, sizeof ppu.frame_chr_bank);
 }
 
 /* ---- scroll helpers (loopy) ---- */

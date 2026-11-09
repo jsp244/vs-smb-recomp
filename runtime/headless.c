@@ -12,6 +12,24 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#ifdef _WIN32
+#  define WIN32_LEAN_AND_MEAN
+#  include <windows.h>
+#endif
+
+/* a monotonic clock in milliseconds, for timing single calls (--reset) */
+static double now_ms(void) {
+#ifdef _WIN32
+    LARGE_INTEGER c, f;
+    QueryPerformanceCounter(&c);
+    QueryPerformanceFrequency(&f);
+    return (double)c.QuadPart * 1000.0 / (double)f.QuadPart;
+#else
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (double)ts.tv_sec * 1000.0 + (double)ts.tv_nsec / 1e6;
+#endif
+}
 
 static FILE *trace_file;
 static uint32_t pal[512];
@@ -111,6 +129,19 @@ static void parse_pokes(const char *spec) {
     }
 }
 
+/* --reset: the reset button before these frames run, as the frontend's Play > Reset game (between frames) */
+static int reset_frames[64];
+static int n_resets;
+
+static void parse_resets(const char *spec) {
+    for (const char *p = spec; *p && n_resets < 64;) {
+        reset_frames[n_resets++] = atoi(p);
+        p = strchr(p, ',');
+        if (!p) break;
+        p++;
+    }
+}
+
 static void fb_to_rgb(uint8_t *rgb) {
     for (int y = 0; y < 240; y++) {
         int emph = (ppu.line_emph[y] >> 5) & 7;
@@ -195,6 +226,8 @@ static void usage(void) {
         "  --input FILE        input script: lines of 'frame BTN+BTN'\n"
         "  --dip HEX           Vs. System DIP switches (bit k = switch k+1 on)\n"
         "  --poke SPEC         writes before a frame: 'frame:ADDR=VAL,ADDR=VAL;frame:...' (hex)\n"
+        "  --reset F,F,...     press the reset button before these frames run (as Play > Reset game);\n"
+        "                      each reset is timed and reported\n"
         "  --palette FILE      write the 512-colour palette the PNGs use as raw RGB (1536 bytes)\n"
         "  --png FILE          write the last frame as PNG\n"
         "  --png-every N       write FILE with the frame number appended every N frames\n"
@@ -250,6 +283,7 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i], "--allstars-music")) allstars_music_enabled = true;
         else if (!strcmp(argv[i], "--dip") && i + 1 < argc) dip = (int)strtol(argv[++i], NULL, 16);
         else if (!strcmp(argv[i], "--poke") && i + 1 < argc) parse_pokes(argv[++i]);
+        else if (!strcmp(argv[i], "--reset") && i + 1 < argc) parse_resets(argv[++i]);
         else if (!strcmp(argv[i], "--palette") && i + 1 < argc) pal_out = argv[++i];
         else if (!strcmp(argv[i], "--wav") && i + 1 < argc) wav = argv[++i];
         else if (!strcmp(argv[i], "--trace") && i + 1 < argc) trace = argv[++i];
@@ -346,6 +380,16 @@ int main(int argc, char **argv) {
 
     for (int frame = 0; frame < frames; frame++) {
         if (trace_file && trace_start && frame == trace_start) sys.trace_hook = trace_hook;
+        for (int k = 0; k < n_resets; k++) {
+            if (reset_frames[k] != frame) continue;
+            uint64_t before = ppu.frame;
+            double t0 = now_ms();
+            nes_reset();
+            double ms = now_ms() - t0;
+            printf("reset before frame %d: %.3f ms; PPU frame %llu -> %llu, PPU dots %s CPU cycles x 3\n", frame, ms,
+                   (unsigned long long)before, (unsigned long long)ppu.frame, ppu.dots == cpu.cycles * 3 ? "=" : "!=");
+            fflush(stdout);
+        }
         while (ev < n_events && events[ev].frame <= frame) {
             nes_set_pad(0, (uint8_t)events[ev].buttons);
             nes_set_pad(1, (uint8_t)(events[ev].buttons >> 8));

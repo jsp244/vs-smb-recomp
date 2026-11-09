@@ -1,10 +1,11 @@
 """Cosimulation check: run the same scripted session through the interpreter
 and through the recompiled code and compare per-frame state hashes.
 
-usage: python tests/cosim.py [--frames N] [--keys SPEC] [--dip HEX] [--rom FILE] [--levels | --walk N]
+usage: python tests/cosim.py [--frames N] [--keys SPEC] [--dip HEX] [--rom FILE] [--reset F,F,...] [--levels | --walk N]
 
 Exit code 0 means every frame matched (CPU registers and cycle count, RAM,
 work RAM, framebuffer, OAM, palettes, nametables, bank registers).
+--reset presses the reset button (as Play > Reset game) before those frames of the session.
 """
 import argparse
 import glob
@@ -110,6 +111,8 @@ def main():
     ap.add_argument("--walk", type=int, default=0, metavar="N",
                     help="instead: walking into the widescreen band, N pixels beyond the screen's left edge "
                          "(runtime/bandwalk.c; the Deck's view has 42)")
+    ap.add_argument("--reset", default=None, metavar="F,F,...",
+                    help="the reset button before these frames of the session (as Play > Reset game)")
     args = ap.parse_args()
     rom = args.rom or (glob.glob(os.path.join(ROOT, "rom", "*.nes")) or [None])[0]
     if not rom:
@@ -133,7 +136,8 @@ def main():
             ok &= compare(interp, native, rom, frames, keys, "07", extra, f" walk {args.walk} {name}")
         sys.exit(0 if ok else 1)
     keys = args.keys or default_keys(args.frames)
-    sys.exit(0 if compare(interp, native, rom, args.frames, keys, args.dip, [], "") else 1)
+    extra, label = (["--reset", args.reset], f" (reset before frame {args.reset})") if args.reset else ([], "")
+    sys.exit(0 if compare(interp, native, rom, args.frames, keys, args.dip, extra, label) else 1)
 
 
 if __name__ == "__main__":
