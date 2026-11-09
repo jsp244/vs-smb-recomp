@@ -208,7 +208,7 @@ Verified (headless harness with scripted input and RAM pokes, screenshots inspec
   gradient carried on into the bands; after a halfway restart or a pipe, the page before
   the start in the left band, parsed by All-Stars' parser, where and when the arcade's
   band draws its own (132 part-way starts: black only where the arcade's band is black,
-  nothing else changed), also after a rewind or a load; the warp zone's pipes in
+  nothing else changed), also after a rewind or a load in the same session; the warp zone's pipes in
   All-Stars' art down to the black screen, as All-Stars draws them, and with them the
   frames at a level's or a world's end and a two-player handover that showed the arcade
   picture; after a state load, a rewind or fast-forward step and the Start + Select
