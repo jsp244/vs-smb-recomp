@@ -387,14 +387,19 @@ must match, and a package without either is not installed). Then:
   running one as `vssmb.exe.new`; the running program is renamed to `vssmb.exe.old`
   (Windows allows renaming a running executable) and the new one takes its name.
 * **Linux and the Steam Deck**: the same from the tar.gz; the running program keeps a
-  second name, `vssmb.old`, and the new file is renamed over `vssmb`, which replaces it
-  in one step.
+  second name, `vssmb.old` (a hard link, where the drive allows one), and the new file is
+  renamed over `vssmb`, which replaces it in one step.
 * **Android**: the APK of the app's edition goes to the system's package installer
   (a `PackageInstaller` session), which asks the player to confirm (the first time, it
   also asks to allow this app to install updates); Android then closes the game and
   installs the update over it, keeping its data, and the player opens it again.
 
-Settings, saves and the ROM are never touched. **Restart now** (Windows, Linux) shuts down
+On Windows and Linux the package's player notes go in with the program: `README.txt`
+(`docs/PLAYERS.md`, which carries the licences of the code in the program, LakeSnes's among
+them) and, in the Deck edition, `STEAMDECK.txt`. Each is written beside the old one as
+`<name>.new` and renamed over it, before the program's own swap; if one cannot be replaced
+(open in another program on Windows), nothing is installed. No other file of the package is
+written. Settings, saves and the ROM are never touched. **Restart now** (Windows, Linux) shuts down
 as Quit does and starts the new version; on Linux it takes over the same process, so on
 a Steam Deck the game session carries on. `vssmb --update-check` prints what a check finds.
 
@@ -478,7 +483,7 @@ python tests/cosim.py --reset 3000,6000   # ... with the reset button pressed tw
 build/nes-headless-recomp --rom rom/*.nes --recomp --frames 9000 --ws-oam-check
                                    # the re-run engine must build the PPU's sprites exactly
 sh tests/run_ui_bind_test.sh       # menu rebinding and text rows (synthetic events)
-sh tests/run_updater_test.sh       # the updater offline: checksums, packages, every refusal
+sh tests/run_updater_test.sh       # the updater offline: checksums, packages, notes, every refusal
 build/vssmb rom/*.nes --rewind-test 1200   # whole rewind path: every re-run frame must match
 build/vssmb rom/*.nes --chord-test         # the Start + Select rollback
 build/vssmb rom/*.nes --reset-test 20000   # Play > Reset game after 20,000 frames: instant, game restarts

@@ -59,6 +59,11 @@ static void fake_release(const char *asset_url, long long size, const char *dige
 
 static int failures;
 #define CHECK(cond, msg) do { if (!(cond)) { printf("FAIL: %s\n", msg); failures++; } else printf("ok:   %s\n", msg); } while (0)
+#ifdef DECK_EDITION
+#  define DOCS_FOR " and STEAMDECK.txt"
+#else
+#  define DOCS_FOR ""
+#endif
 
 static uint8_t *read_all(const char *path, size_t *len) {
     FILE *f = fopen(path, "rb");
@@ -82,13 +87,61 @@ static int same_as_file(const uint8_t *data, size_t len, const char *path) {
     return same;
 }
 
-/* the stand-in program before each case: "old version", with no backup beside it */
+/* the program's folder as files of its own: <folder>/name */
+static char run_dir[1100];
+static const char *in_run(const char *name) {
+    static char p[4][1300];
+    static int i;
+    i = (i + 1) & 3;
+    snprintf(p[i], sizeof p[i], "%s%s", run_dir, name);
+    return p[i];
+}
+
+static void put_text(const char *path, const char *text) {
+    FILE *f = fopen(path, "wb");
+    if (f) { fputs(text, f); fclose(f); }
+}
+
+static int text_is(const char *path, const char *text) {
+    return same_as_file((const uint8_t *)text, strlen(text), path);
+}
+
+/* the stand-in program before each case: "old version", with no backup beside it, and the old
+   version's notes; nothing else of the package's in the folder */
 static void reset_program(const char *exe) {
     char p[1300];
     FILE *f = fopen(exe, "wb");
     if (f) { fputs("old version", f); fclose(f); }
     snprintf(p, sizeof p, "%s.old", exe);
     remove(p);
+    put_text(in_run("README.txt"), "old notes\n");
+    put_text(in_run("STEAMDECK.txt"), "old deck notes\n");
+    remove(in_run("README.txt.new"));
+    remove(in_run("STEAMDECK.txt.new"));
+    remove(in_run("add-to-steam.py"));
+    remove(in_run("vssmb.png"));
+}
+
+/* no note's new copy left behind, and none of the package's other files written */
+static int only_expected_names(void) {
+    return !f_exists(in_run("README.txt.new")) && !f_exists(in_run("STEAMDECK.txt.new")) &&
+           !f_exists(in_run("add-to-steam.py")) && !f_exists(in_run("vssmb.png"));
+}
+
+/* after an installation: the package's README.txt, and its STEAMDECK.txt in the Deck edition only */
+static int notes_new(void) {
+#ifdef DECK_EDITION
+    const char *deck = "deck notes\n";
+#else
+    const char *deck = "old deck notes\n";
+#endif
+    return text_is(in_run("README.txt"), "notes\n") && text_is(in_run("STEAMDECK.txt"), deck) && only_expected_names();
+}
+
+/* after a refusal: the old version's notes */
+static int notes_old(void) {
+    return text_is(in_run("README.txt"), "old notes\n") && text_is(in_run("STEAMDECK.txt"), "old deck notes\n") &&
+           only_expected_names();
 }
 
 static int program_is(const char *exe, const char *ref) {
@@ -231,29 +284,95 @@ int main(int argc, char **argv) {
         const char *bad_sums = "1111111111111111111111111111111111111111111111111111111111111111  " VSSMB_PACKAGE "\n";
         long long size = (long long)fake_pkg_len;
 
+        folder_of(g_exe, run_dir, sizeof run_dir);
+#ifdef DECK_EDITION
+        printf("(the Deck edition: its notes are README.txt and STEAMDECK.txt)\n");
+#endif
+
         /* each case: the program as before, a release, a check, and Update now */
-#define CASE(url, sz, dig, sm) (reset_program(g_exe), fake_release((url), (sz), (dig), (sm)), check(), updater_poll(&u), \
-                                (u.state == UPD_AVAILABLE && u.can_install) ? install(why, sizeof why) : -1)
+#define INSTALL(url, sz, dig, sm) (fake_release((url), (sz), (dig), (sm)), check(), updater_poll(&u), \
+                                   (u.state == UPD_AVAILABLE && u.can_install) ? install(why, sizeof why) : -1)
+#define CASE(url, sz, dig, sm) (reset_program(g_exe), INSTALL(url, sz, dig, sm))
         CHECK(CASE(RELEASE VSSMB_PACKAGE, size, digest, NULL) == 1 && program_is(g_exe, ref) && backup_is_old(g_exe) && no_leftover(g_exe),
               "GitHub's digest: installed, the old program kept as .old");
-        CHECK(CASE(RELEASE VSSMB_PACKAGE, size, NULL, sums) == 1 && program_is(g_exe, ref), "SHA256SUMS alone: installed");
-        CHECK(CASE(RELEASE VSSMB_PACKAGE, size, digest, other) == 1 && program_is(g_exe, ref),
+        CHECK(notes_new(), "... with the package's README.txt" DOCS_FOR " over the old one, and no other file of the package");
+        CHECK(CASE(RELEASE VSSMB_PACKAGE, size, NULL, sums) == 1 && program_is(g_exe, ref) && notes_new(), "SHA256SUMS alone: installed");
+        CHECK(CASE(RELEASE VSSMB_PACKAGE, size, digest, other) == 1 && program_is(g_exe, ref) && notes_new(),
               "SHA256SUMS that does not list the package, with the digest: installed");
-        CHECK(CASE(RELEASE VSSMB_PACKAGE, size, wrong, NULL) == 0 && strstr(why, "SHA-256 GitHub lists") && untouched(g_exe),
-              "a wrong digest: refused, nothing changed");
-        CHECK(CASE(RELEASE VSSMB_PACKAGE, size, NULL, bad_sums) == 0 && strstr(why, "SHA256SUMS") && untouched(g_exe),
+        CHECK(CASE(RELEASE VSSMB_PACKAGE, size, wrong, NULL) == 0 && strstr(why, "SHA-256 GitHub lists") && untouched(g_exe) && notes_old(),
+              "a wrong digest: refused, nothing changed (the notes neither)");
+        CHECK(CASE(RELEASE VSSMB_PACKAGE, size, NULL, bad_sums) == 0 && strstr(why, "SHA256SUMS") && untouched(g_exe) && notes_old(),
               "a wrong SHA256SUMS line: refused, nothing changed");
-        CHECK(CASE(RELEASE VSSMB_PACKAGE, size, digest, bad_sums) == 0 && untouched(g_exe), "the digest right but SHA256SUMS wrong: refused");
-        CHECK(CASE(RELEASE VSSMB_PACKAGE, size, NULL, other) == 0 && strstr(why, "no SHA-256") && untouched(g_exe),
+        CHECK(CASE(RELEASE VSSMB_PACKAGE, size, digest, bad_sums) == 0 && untouched(g_exe) && notes_old(),
+              "the digest right but SHA256SUMS wrong: refused");
+        CHECK(CASE(RELEASE VSSMB_PACKAGE, size, NULL, other) == 0 && strstr(why, "no SHA-256") && untouched(g_exe) && notes_old(),
               "no checksum for the package anywhere: refused");
-        CHECK(CASE(RELEASE VSSMB_PACKAGE, size + 1, digest, NULL) == 0 && strstr(why, "incomplete") && untouched(g_exe),
+        CHECK(CASE(RELEASE VSSMB_PACKAGE, size + 1, digest, NULL) == 0 && strstr(why, "incomplete") && untouched(g_exe) && notes_old(),
               "a download shorter than GitHub lists: refused");
-        CHECK(CASE(RELEASE VSSMB_PACKAGE, size, NULL, NULL) == -1 && u.state == UPD_AVAILABLE && strstr(u.text, "no SHA-256"),
+        CHECK(CASE(RELEASE VSSMB_PACKAGE, size, NULL, NULL) == -1 && u.state == UPD_AVAILABLE && strstr(u.text, "no SHA-256") && notes_old(),
               "a release without any checksum: offered as a download page only");
         CHECK(CASE("https://github.com/owner/vs-smb-recomp/releases/download/v1.1.0/" VSSMB_PACKAGE, size, digest, NULL) == -1 &&
               strstr(u.text, "no package for this system"), "a package of another release: not installed from here");
         CHECK(CASE("https://example.com/" VSSMB_PACKAGE, size, digest, NULL) == -1, "a package from another site: not installed from here");
+
+        /* the notes: one the folder lacks is put there; one that cannot be replaced stops the update
+           before the program is touched */
+        reset_program(g_exe);
+        remove(in_run("README.txt"));
+        CHECK(INSTALL(RELEASE VSSMB_PACKAGE, size, digest, NULL) == 1 && program_is(g_exe, ref) && notes_new(),
+              "a folder without README.txt: the update puts the new one there");
+        reset_program(g_exe);
+        remove(in_run("README.txt"));
+#ifdef _WIN32
+        CreateDirectoryA(in_run("README.txt"), NULL);
+#else
+        mkdir(in_run("README.txt"), 0755);
+#endif
+        put_text(in_run("README.txt/keep"), "x");
+        CHECK(INSTALL(RELEASE VSSMB_PACKAGE, size, digest, NULL) == 0 && strstr(why, "README.txt could not be replaced") &&
+              untouched(g_exe) && only_expected_names(), "README.txt that cannot be replaced (a folder): refused, the program untouched");
+        remove(in_run("README.txt/keep"));
+#ifdef _WIN32
+        RemoveDirectoryA(in_run("README.txt"));
+        /* open in another program (no sharing for deletion), or marked read-only */
+        reset_program(g_exe);
+        HANDLE open_readme = CreateFileA(in_run("README.txt"), GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+        CHECK(open_readme != INVALID_HANDLE_VALUE && INSTALL(RELEASE VSSMB_PACKAGE, size, digest, NULL) == 0 &&
+              strstr(why, "README.txt could not be replaced (is it open in another program?)") && untouched(g_exe),
+              "README.txt held open by another program: refused, the program untouched");
+        if (open_readme != INVALID_HANDLE_VALUE) CloseHandle(open_readme);
+        CHECK(text_is(in_run("README.txt"), "old notes\n") && only_expected_names(), "... and the old README.txt as it was");
+        reset_program(g_exe);
+        SetFileAttributesA(in_run("README.txt"), FILE_ATTRIBUTE_READONLY);
+        CHECK(INSTALL(RELEASE VSSMB_PACKAGE, size, digest, NULL) == 1 && program_is(g_exe, ref) && notes_new(),
+              "a read-only README.txt: replaced all the same");
+#else
+        rmdir(in_run("README.txt"));
+#endif
+
+        /* what the Updates tab says after Update now: the .old copy only where there is one */
+        reset_program(g_exe);
+        fake_release(RELEASE VSSMB_PACKAGE, size, digest, NULL);
+        check();
+        install_worker(NULL);
+        updater_poll(&u);
+        CHECK(u.state == UPD_INSTALLED && strstr(u.text, "The previous version is kept as " BINARY ".old."), u.text);
+#ifndef _WIN32
+        /* a drive without hard links: here a folder in the way of vssmb.old */
+        reset_program(g_exe);
+        mkdir(in_run(BINARY ".old"), 0755);
+        put_text(in_run(BINARY ".old/keep"), "x");
+        fake_release(RELEASE VSSMB_PACKAGE, size, digest, NULL);
+        check();
+        install_worker(NULL);
+        updater_poll(&u);
+        CHECK(u.state == UPD_INSTALLED && !strstr(u.text, ".old") && program_is(g_exe, ref) && notes_new(),
+              "no second name for the old program: installed, and the message does not promise vssmb.old");
+        remove(in_run(BINARY ".old/keep"));
+        rmdir(in_run(BINARY ".old"));
+#endif
 #undef CASE
+#undef INSTALL
         snprintf(g_pretend, sizeof g_pretend, "1.2.0");
         fake_release(RELEASE VSSMB_PACKAGE, size, digest, NULL);
         check();

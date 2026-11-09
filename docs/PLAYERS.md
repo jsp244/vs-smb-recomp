@@ -115,8 +115,9 @@ The Updates tab shows this program's version. Check for updates asks GitHub for 
 newest release; the program goes online only when you press it. When there is a newer
 version, Update now downloads its package for your system, checks it against the
 SHA-256 checksums published with the release and puts the new program in place of
-this one. Your settings, saves and ROM stay as they are, and the previous version is
-kept beside it as vssmb.exe.old (vssmb.old on Linux): to go back, delete vssmb.exe and
+this one, with its README.txt (this file) in place of the old one. Your settings, saves
+and ROM stay as they are, and the previous version is kept beside it as vssmb.exe.old
+(vssmb.old on Linux, where the drive allows it): to go back, delete vssmb.exe and
 rename the .old file. Restart now starts the new version at once (a game in progress
 ends); otherwise it starts the next time you open the game. Nothing is installed until
 you press Update now. The program's folder has to be writable for this; if it is not

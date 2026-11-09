@@ -55,9 +55,10 @@ New versions are installed from the menu, in Game Mode, without reinstalling: L2
 then the Updates tab. Check for updates asks GitHub for the newest release (the Deck
 needs a network connection only for this and the download). When there is a newer
 version, Update now downloads the Steam Deck package, checks it against the SHA-256
-checksums published with the release, and replaces the vssmb program in the game folder.
-Your settings, save states, the ROM and the Steam shortcut with its artwork stay as they
-are; the previous version is kept as vssmb.old. Restart now starts the new version in
+checksums published with the release, and replaces the vssmb program in the game folder,
+and README.txt and this STEAMDECK.txt with the new version's. Your settings, save states,
+the ROM and the Steam shortcut with its artwork stay as they are; the previous version is
+kept as vssmb.old (where the drive allows it). Restart now starts the new version in
 the same Steam session, so the game simply comes back up. Nothing is downloaded or
 installed until you press those buttons.
 

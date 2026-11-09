@@ -16,12 +16,17 @@
  *    as <name>.new; the running program is renamed to <name>.old (Windows allows renaming a
  *    running executable) and the new one takes its place. Restart now starts it in a new process.
  *  - Linux and the Steam Deck: the same from the tar.gz; the running program keeps a second name,
- *    <name>.old (a hard link), and <name>.new is renamed over it, which swaps it in one step.
- *    Restart now exec()s the new version in the same process, so a Steam session carries on.
+ *    <name>.old (a hard link, where the drive allows one), and <name>.new is renamed over it,
+ *    which swaps it in one step. Restart now exec()s the new version in the same process, so a
+ *    Steam session carries on.
  *  - Android: the APK goes to the system's package installer (VSSMBActivity.installUpdate),
  *    which asks the player to confirm, closes the game and installs the update over it.
- * Settings, saves and the ROM are never touched. Checks and installations run on a worker
- * thread; the menu reads the state on the main thread.
+ * On the desktop the player's notes in the package (README.txt, which carries the licences of
+ * the code in the program, and STEAMDECK.txt in the Deck edition) are written the same way,
+ * <name>.new renamed over <name>, and before the program: a folder never runs a new version
+ * with the old notes. Only those names are written. Settings, saves and the ROM are never
+ * touched. Checks and installations run on a worker thread; the menu reads the state on the
+ * main thread.
  */
 #include "updater.h"
 #include "http.h"
@@ -76,6 +81,22 @@
 #endif
 #ifndef PACKAGE_DIR
 #  define PACKAGE_DIR "vssmb"
+#endif
+#ifndef __ANDROID__
+/* the player's notes beside the program in the desktop packages (the Makefile's dist rule):
+   an update writes these too, and no other names */
+static const char *const doc_names[] = {
+    "README.txt",
+#  ifdef DECK_EDITION
+    "STEAMDECK.txt",
+#  endif
+};
+#  define N_DOCS (sizeof doc_names / sizeof doc_names[0])
+#  ifdef DECK_EDITION
+#    define DOCS_TEXT "README.txt and STEAMDECK.txt"
+#  else
+#    define DOCS_TEXT "README.txt"
+#  endif
 #endif
 #define SUMS_NAME "SHA256SUMS"  /* the checksum file published with a release */
 #define TIMEOUT_MS 20000
@@ -478,11 +499,20 @@ static int f_rename(const char *from, const char *to, int replace) {
     wchar_t a[1100], b[1100];
     return wide(from, a, 1100) && wide(to, b, 1100) && MoveFileExW(a, b, MOVEFILE_WRITE_THROUGH | (replace ? MOVEFILE_REPLACE_EXISTING : 0));
 }
-/* the whole file, on the disk before this returns */
-static int f_write(const char *path, const uint8_t *data, size_t len) {
+/* name.new over name, a note of the program's folder: a read-only mark on the old one does not stop it */
+static int f_replace(const char *from, const char *to) {
+    wchar_t w[1100];
+    DWORD a = wide(to, w, 1100) ? GetFileAttributesW(w) : INVALID_FILE_ATTRIBUTES;
+    if (a != INVALID_FILE_ATTRIBUTES && (a & FILE_ATTRIBUTE_READONLY) && !(a & FILE_ATTRIBUTE_DIRECTORY))
+        SetFileAttributesW(w, a & ~(DWORD)FILE_ATTRIBUTE_READONLY);
+    return f_rename(from, to, 1);
+}
+/* the whole file, on the disk before this returns (program: an executable; no such mark on Windows) */
+static int f_write(const char *path, const uint8_t *data, size_t len, int program) {
     wchar_t w[1100];
     HANDLE h;
     int ok = 1;
+    (void)program;
     if (!wide(path, w, 1100)) return 0;
     h = CreateFileW(w, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
     if (h == INVALID_HANDLE_VALUE) return 0;
@@ -499,25 +529,37 @@ static int f_write(const char *path, const uint8_t *data, size_t len) {
 #else
 static int f_remove(const char *p) { return unlink(p) == 0; }
 static int f_exists(const char *p) { struct stat st; return lstat(p, &st) == 0; }
-static int f_write(const char *path, const uint8_t *data, size_t len) {
-    int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0755), ok = fd >= 0;
+static int f_replace(const char *from, const char *to) { return rename(from, to) == 0; }
+/* the whole file, on the disk before this returns (program: executable, rwxr-xr-x; else rw-r--r--) */
+static int f_write(const char *path, const uint8_t *data, size_t len, int program) {
+    mode_t mode = program ? 0755 : 0644;
+    int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, mode), ok = fd >= 0;
     for (size_t done = 0; ok && done < len;) {
         ssize_t n = write(fd, data + done, len - done);
         if (n < 0 && errno == EINTR) continue;
         ok = n > 0;
         if (ok) done += (size_t)n;
     }
-    if (ok) ok = fsync(fd) == 0 && fchmod(fd, 0755) == 0;
+    if (ok) ok = fsync(fd) == 0 && fchmod(fd, mode) == 0;
     if (fd >= 0 && close(fd) != 0) ok = 0;
     if (!ok) unlink(path);
     return ok;
 }
 #endif
 
+/* where the name of the file in path starts (after its folder's separator; Windows takes / as one too) */
+static const char *name_in(const char *path) {
+    const char *slash = strrchr(path, SEP[0]);
+#ifdef _WIN32
+    const char *fwd = strrchr(path, '/');
+    if (fwd && (!slash || fwd > slash)) slash = fwd;
+#endif
+    return slash ? slash + 1 : path;
+}
+
 /* the folder of path, with the separator */
 static void folder_of(const char *path, char *out, size_t cap) {
-    const char *slash = strrchr(path, SEP[0]);
-    snprintf(out, cap, "%.*s", slash ? (int)(slash - path + 1) : 0, path);
+    snprintf(out, cap, "%.*s", (int)(name_in(path) - path), path);
 }
 
 /* ---- Android: the system's package installer, through VSSMBActivity ---- */
@@ -594,7 +636,7 @@ static int folder_writable(void) {
 #else
     char probe[1100];
     snprintf(probe, sizeof probe, "%s.new", g_exe);
-    if (!g_exe[0] || !f_write(probe, (const uint8_t *)"", 0)) return 0;
+    if (!g_exe[0] || !f_write(probe, (const uint8_t *)"", 0, 0)) return 0;
     f_remove(probe);
     return 1;
 #endif
@@ -680,7 +722,8 @@ static void check(void) {
                    latest, date, size / 1048576.0);
 #else
     else set_state(UPD_AVAILABLE, "Version %s is out (published %s). Update now downloads %.1f MB from GitHub, checks it and "
-                   "replaces this program; settings, saves and the ROM stay as they are.", latest, date, size / 1048576.0);
+                   "replaces this program (with its " DOCS_TEXT "); settings, saves and the ROM stay as they are.",
+                   latest, date, size / 1048576.0);
 #endif
 }
 
@@ -760,62 +803,106 @@ static uint8_t *download(size_t *len, char hex[65], char *why, size_t cap) {
 /* ---- install ---- */
 
 #ifndef __ANDROID__
-/* worker thread: the new program into this one's place, as the file comment describes */
+static int g_kept_old;               /* the last installation kept the previous program as <name>.old */
+
+/* a malloc'd copy of the package's file PACKAGE_DIR/name (arc: the zip on Windows, the unpacked tar
+   elsewhere), or NULL */
+static uint8_t *package_file(const uint8_t *arc, size_t len, const char *name, size_t *out_len) {
+    char entry[256];
+    snprintf(entry, sizeof entry, "%s/%s", PACKAGE_DIR, name);
+#ifdef _WIN32
+    return zip_entry(arc, len, entry, out_len);
+#else
+    return tar_entry(arc, len, entry, out_len);
+#endif
+}
+
+/* worker thread: the new program into this one's place, as the file comment describes, with the notes
+   the package has for it (doc_names). Each new file is first written in full beside the one it replaces;
+   then the notes take their places, then the program. Nothing is replaced when a file cannot be written,
+   and the program stays as it was when anything fails before its own swap. */
 static int install(char *why, size_t cap) {
-    char hex[65], newbin[1100], backup[1100];
-    const char *entry = PACKAGE_DIR "/" BINARY;
-    size_t len = 0, binlen = 0;
-    uint8_t *pkg = download(&len, hex, why, cap), *bin = NULL;
-    int ok = 0;
+    char hex[65], dir[sizeof g_exe], newbin[1100], backup[1100], doc_path[N_DOCS][1100], doc_new[N_DOCS][1100];
+    uint8_t *pkg, *arc, *bin = NULL, *doc[N_DOCS];
+    size_t len = 0, arclen = 0, binlen = 0, doclen[N_DOCS], k;
+    int ok = 0, written, have[N_DOCS];
+    g_kept_old = 0;
+    pkg = download(&len, hex, why, cap);
     if (!pkg) return 0;
 #ifdef _WIN32
-    bin = zip_entry(pkg, len, entry, &binlen);
+    arc = pkg;                                   /* the zip is read where it is */
+    arclen = len;
+#else
+    arc = gunzip(pkg, len, &arclen);             /* the tar */
+    free(pkg);
+#endif
+    for (k = 0; k < N_DOCS; k++) { doc[k] = NULL; doclen[k] = 0; }
+    if (arc) {
+        bin = package_file(arc, arclen, BINARY, &binlen);
+        for (k = 0; k < N_DOCS; k++) doc[k] = package_file(arc, arclen, doc_names[k], &doclen[k]);
+        free(arc);
+    }
+#ifdef _WIN32
     if (bin && (binlen < 2 || bin[0] != 'M' || bin[1] != 'Z')) { free(bin); bin = NULL; }
 #else
-    {
-        size_t tlen = 0;
-        uint8_t *tar = gunzip(pkg, len, &tlen);
-        if (tar) bin = tar_entry(tar, tlen, entry, &binlen);
-        free(tar);
-    }
     if (bin && (binlen < 4 || memcmp(bin, "\177ELF", 4))) { free(bin); bin = NULL; }
 #endif
-    free(pkg);
-    if (!bin) return failed(why, cap, "the package holds no usable %s", BINARY);
+    if (!bin) {
+        for (k = 0; k < N_DOCS; k++) free(doc[k]);
+        return failed(why, cap, "the package holds no usable %s", BINARY);
+    }
 
+    folder_of(g_exe, dir, sizeof dir);
     snprintf(newbin, sizeof newbin, "%s.new", g_exe);
     snprintf(backup, sizeof backup, "%s.old", g_exe);
-    if (!f_write(newbin, bin, binlen)) { free(bin); return failed(why, cap, "the new version could not be written beside this one"); }
+    written = f_write(newbin, bin, binlen, 1);
     free(bin);
+    for (k = 0; k < N_DOCS; k++) {
+        snprintf(doc_path[k], sizeof doc_path[k], "%s%s", dir, doc_names[k]);
+        snprintf(doc_new[k], sizeof doc_new[k], "%s%s.new", dir, doc_names[k]);
+        have[k] = doc[k] != NULL;               /* a note the package does not have stays as it is */
+        if (written && have[k]) written = f_write(doc_new[k], doc[k], doclen[k], 0);
+        free(doc[k]);
+    }
 
     if (g_swap) SDL_LockMutex(g_swap);
-    if (SDL_AtomicGet(&g_cancel)) {
-        f_remove(newbin);
+    if (!written) {
+        failed(why, cap, "the new version could not be written beside this one");
+    } else if (SDL_AtomicGet(&g_cancel)) {
         failed(why, cap, "the program is closing");
     } else {
 #ifdef _WIN32
         /* Windows cannot replace a running program's file, but can rename it */
         f_remove(backup);
         if (f_exists(backup)) failed(why, cap, "the previous version (%s.old) is still running", BINARY);
-        else if (!f_rename(g_exe, backup, 0)) failed(why, cap, "the running program could not be renamed");
-        else if (!f_rename(newbin, g_exe, 0)) { f_rename(backup, g_exe, 0); failed(why, cap, "the new version could not take the program's place"); }
-        else ok = 1;
+        else {
+            for (k = 0; k < N_DOCS && (!have[k] || f_replace(doc_new[k], doc_path[k])); k++) {}
+            if (k < N_DOCS) failed(why, cap, "%s could not be replaced (is it open in another program?)", doc_names[k]);
+            else if (!f_rename(g_exe, backup, 0)) failed(why, cap, "the running program could not be renamed");
+            else if (!f_rename(newbin, g_exe, 0)) { f_rename(backup, g_exe, 0); failed(why, cap, "the new version could not take the program's place"); }
+            else ok = g_kept_old = 1;
+        }
 #else
-        /* the old version keeps a second name; the rename replaces the program in one step */
-        char dir[1100];
+        /* the old version keeps a second name where the drive allows a hard link; the rename replaces
+           the program in one step */
+        int linked;
         f_remove(backup);
-        if (link(g_exe, backup) != 0) backup[0] = '\0';
-        if (rename(newbin, g_exe) != 0) {
-            failed(why, cap, "the new version could not take the program's place (%s)", strerror(errno));
-            if (backup[0]) f_remove(backup);
-        } else {
-            folder_of(g_exe, dir, sizeof dir);
+        linked = link(g_exe, backup) == 0;
+        for (k = 0; k < N_DOCS && (!have[k] || f_replace(doc_new[k], doc_path[k])); k++) {}
+        if (k < N_DOCS) failed(why, cap, "%s could not be replaced (%s)", doc_names[k], strerror(errno));
+        else if (rename(newbin, g_exe) != 0) failed(why, cap, "the new version could not take the program's place (%s)", strerror(errno));
+        else {
             int fd = open(dir[0] ? dir : ".", O_RDONLY | O_DIRECTORY | O_CLOEXEC);
             if (fd >= 0) { fsync(fd); close(fd); }
             ok = 1;
+            g_kept_old = linked;
         }
+        if (!ok && linked) f_remove(backup);
 #endif
-        if (!ok) f_remove(newbin);
+    }
+    if (!ok) {                                   /* the new files that did not take their places */
+        f_remove(newbin);
+        for (k = 0; k < N_DOCS; k++) if (have[k]) f_remove(doc_new[k]);
     }
     if (g_swap) SDL_UnlockMutex(g_swap);
     return ok;
@@ -883,7 +970,6 @@ static int SDLCALL check_worker(void *arg) {
 
 static int SDLCALL install_worker(void *arg) {
     char why[400], latest[64];
-    const char *name = strrchr(g_exe, SEP[0]);
     (void)arg;
     lock();
     snprintf(latest, sizeof latest, "%s", g_info.latest);
@@ -891,11 +977,12 @@ static int SDLCALL install_worker(void *arg) {
     if (!install(why, sizeof why))
         set_state(UPD_FAILED, "Version %s was not installed: %s.", latest, why);
 #ifndef __ANDROID__
-    else
+    else {
+        char kept[200] = "";
+        if (g_kept_old) snprintf(kept, sizeof kept, " The previous version is kept as %s.old.", g_exe[0] ? name_in(g_exe) : BINARY);
         set_state(UPD_INSTALLED, "Version %s is installed. Restart now to use it (a game in progress ends), or it starts the next "
-                  "time you open the game. The previous version is kept as %s.old.", latest, name ? name + 1 : BINARY);
-#else
-    (void)name;
+                  "time you open the game.%s", latest, kept);
+    }
 #endif
     return 0;
 }
@@ -917,9 +1004,15 @@ void updater_startup(void) {
     android_init();
     if (g_apk[0]) remove(g_apk);     /* an update that was installed, or never confirmed */
 #else
-    if (g_exe[0]) {                  /* the new version of an update that did not finish */
+    if (g_exe[0]) {                  /* the new files of an update that did not finish */
+        char dir[sizeof g_exe];
         snprintf(path, sizeof path, "%s.new", g_exe);
         if (f_exists(path)) f_remove(path);
+        folder_of(g_exe, dir, sizeof dir);
+        for (size_t k = 0; k < N_DOCS; k++) {
+            snprintf(path, sizeof path, "%s%s.new", dir, doc_names[k]);
+            if (f_exists(path)) f_remove(path);
+        }
     }
 #endif
     (void)path;
