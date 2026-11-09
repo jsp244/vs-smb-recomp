@@ -933,6 +933,7 @@ static struct {
     uint16_t bg2_scroll, bg3_scroll;
     int      bg2_pages;        /* how many pages of layer 2 the area setup filled: they repeat */
     int      bg2_seam;         /* after a castle loop, layer 2's x left of which it shows what it did before (-1: none) */
+    bool     loop_noted;       /* a castle loop taken, noted at GameEngine (loop_taken), its column not parsed yet */
     uint8_t  data[1024];       /* the area's data (its objects, from VS.'s data pointer in PRG RAM) it was built from */
     int      data_len;
     visit_t  start;            /* the visit it was built for (see area_start; ok false: its start not known) */
@@ -1272,6 +1273,46 @@ static bool visit_seen(void) {
     return false;
 }
 
+/* After a castle loop the camera is four pages back, layer 2's scroll two of the layer's pages. All-Stars draws the
+   layer in strips just ahead of its scroll ($03:A2BA, $04:9B35: 64 pixels wide and ahead in castles, 32 elsewhere),
+   so what it drew before the loop stays until new strips replace it: left of this seam (for the screen now) layer 2
+   shows the layer 512 pixels on (write_bg2_rows) */
+static int loop_seam_here(void) {
+    int step = sb->wram[0xBA] == 3 ? 64 : 32, scroll = (((ram[0x071A] << 8) | ram[0x071C]) >> 1) & ~(step - 1);
+    return (scroll + 256 + 2 * step) & 0x7FFF;
+}
+
+/* VS. has taken a castle loop (ExecGameLoopback, $BFA5: its parser four pages back, at the loop page's first column)
+   that parser_column has not seen: the parser 64 columns behind the last one rendered, at a loop's first column */
+static bool loop_just_taken(void) {
+    return last_world >= 0 && ram[RAM_PAGE] * 16 + (ram[RAM_COLUMN] & 15) == last_world + 1 - 64 && loop_pending(ram[RAM_WORLD]);
+}
+
+/* a castle loop of the visit built, at the picture f (and its seam), in place of what an earlier run of these frames
+   (a rewound one) saw from there on */
+static void note_loop(uint64_t f) {
+    if (!area.start.ok) return;
+    for (int i = 0; i < N_LOOPS_SEEN; i++)
+        if (loops_seen[i].visit == area.start.frame && loops_seen[i].epoch == area.start.epoch && loops_seen[i].frame >= f)
+            loops_seen[i].frame = 0;
+    int i = loops_head++ & (N_LOOPS_SEEN - 1);
+    loops_seen[i].visit = area.start.frame; loops_seen[i].frame = f; loops_seen[i].seam = area.bg2_seam;
+    loops_seen[i].seq = rec_seq++; loops_seen[i].epoch = area.start.epoch;
+}
+
+/* At GameEngine ($ADAB): ExecGameLoopback runs in GameEngine's enemy loop (ProcLoopCommand), so the next frame's
+   GameEngine sees a loop taken, a few frames before VS.'s parser renders the loop page's first column (where
+   parser_column would see it). Layer 2 takes the loop's seam now, and the loop is noted at the picture it showed
+   first, so that a jump to any moment after it (a rewind, a state load: resync's loops_until) finds it. Until
+   then layer 2 showed its new place and jumped back to what it showed before (the castles' background flickering
+   at each loop). */
+static void loop_taken(void) {
+    if (!area.ready || area.resync || area.loop_noted || !loop_just_taken()) return;
+    area.bg2_seam = loop_seam_here();
+    note_loop(frame_now() - 1);
+    area.loop_noted = true;
+}
+
 static void parser_column(void) {
     /* After a jump that landed between VS.'s InitializeArea and the area's first column, the hook that would have set
        area.pending ran before the jump. That column is the one at the screen's left edge, where VS.'s parser renders
@@ -1305,19 +1346,12 @@ static void parser_column(void) {
     uint8_t *w = sb->wram;
     if (loop) {
         loop_back(w, ram);
-        /* the camera went four pages back too, layer 2's scroll two of the layer's pages. All-Stars draws
-           the layer in strips just ahead of its scroll ($03:A2BA, $04:9B35: 64 pixels wide and ahead in
-           castles, 32 elsewhere), so what it drew before the loop stays until new strips replace it */
-        int step = w[0xBA] == 3 ? 64 : 32, scroll = (((ram[0x071A] << 8) | ram[0x071C]) >> 1) & ~(step - 1);
-        area.bg2_seam = (scroll + 256 + 2 * step) & 0x7FFF;
-        if (area.start.ok) {   /* in place of what an earlier run of these frames (run-ahead's, a rewound one) saw from here on */
-            for (int i = 0; i < N_LOOPS_SEEN; i++)
-                if (loops_seen[i].visit == area.start.frame && loops_seen[i].epoch == area.start.epoch &&
-                    loops_seen[i].frame >= frame_now()) loops_seen[i].frame = 0;
-            int i = loops_head++ & (N_LOOPS_SEEN - 1);
-            loops_seen[i].visit = area.start.frame; loops_seen[i].frame = frame_now(); loops_seen[i].seam = area.bg2_seam;
-            loops_seen[i].seq = rec_seq++; loops_seen[i].epoch = area.start.epoch;
+        /* noted already at GameEngine (loop_taken), unless the loop came in this frame */
+        if (!area.loop_noted) {
+            area.bg2_seam = loop_seam_here();
+            note_loop(frame_now());
         }
+        area.loop_noted = false;
     } else if (last_world >= 0 && world != last_world + 1) {
         /* this column again, or (run-ahead back across a loop) one before the loop: from All-Stars' state
            before it, if it is still kept */
@@ -1340,6 +1374,7 @@ static void parser_column(void) {
 /* ---- hooks ---- */
 #define VS_AREA_INIT   0x965C
 #define VS_PARSER_CORE 0xA2D7
+#define VS_GAME_ENGINE 0xADAB
 #define VS_RETURN      0x0000   /* a call in VS.'s sandbox returns here */
 
 /* a JSR to pc in VS.'s CPU sandbox: returns 0 when it came back */
@@ -1427,6 +1462,7 @@ static void resync(void) {
         return;
     }
     area.ready = false;
+    area.loop_noted = false;
     memset(area.parsed, 0, sizeof area.parsed); memset(area.have, 0, sizeof area.have);
     area.last_col = -1;
     memcpy(rr, ram, sizeof rr);
@@ -1500,6 +1536,7 @@ void allstars_hook(uint16_t pc) {
     if (!as.rom || !sb_base) return;
     if (pc == VS_AREA_INIT) { area.pending = true; area.last_col = -1; ws_stale = false; }
     else if (pc == VS_PARSER_CORE) parser_column();
+    else if (pc == VS_GAME_ENGINE) loop_taken();
 }
 
 /* The frontend calls this after every jump of VS.'s machine that is not run-ahead's own return (a state
@@ -2073,7 +2110,11 @@ static void write_bg2_rows(int scroll, int x0, int w, int r0, int r1, int seam) 
         }
     }
 }
-static void write_bg2(int scroll, int x0, int w) { write_bg2_rows(scroll, x0, w, 0, 32, area.bg2_seam); }
+/* layer 2's seam for this picture: on the first picture after a castle loop, before the next GameEngine notes it
+   (loop_taken), the loop's already */
+static int loop_seam(void) {
+    return area.loop_noted || !loop_just_taken() ? area.bg2_seam : loop_seam_here();
+}
 
 /* layer 3's clouds: All-Stars keeps them as 16x16 tiles at $7F3000 (pages of 16 x 14, $E0 bytes, 12
    pages) and the tilemap words of each at BG3_MAP16; rows 0-3 of the tilemap are the status bar. Only
@@ -3473,15 +3514,16 @@ int allstars_render(uint32_t *out, int stride, int x, int y, int w, int h) {
     write_bg1();
     unsigned bshow = 0;   /* the page before a part-way start, beside the picture: which of its columns are drawn */
     int bstart = x < 0 ? write_bg1_before(cam + x, cam + (x + w < 0 ? x + w : 0), &bshow) : INT_MIN;
+    int seam = loop_seam();
     if (starry) {
         int split = (irq_line + 1 + sb->ppu.vofs[1]) >> 3;   /* the first tile row below the split */
         if (split < 0) split = 0;
         if (split > 32) split = 32;
         write_bg2_rows(area.bg3_scroll, x, w, 0, split, -1);
-        write_bg2_rows(area.bg2_scroll, x, w, split, 32, area.bg2_seam);
+        write_bg2_rows(area.bg2_scroll, x, w, split, 32, seam);
         write_bg3_plain(0);
     } else {
-        write_bg2(area.bg2_scroll, x, w);
+        write_bg2_rows(area.bg2_scroll, x, w, 0, 32, seam);
         if (type == 1) write_bg3_clouds(area.bg3_scroll, x, w);
         else write_bg3_plain(type == 0);
     }

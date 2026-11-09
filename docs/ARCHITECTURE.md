@@ -456,7 +456,14 @@ clouds' scroll above the line, the hills' below, and layer 3 is blank. After a c
 loop the camera is four pages back and layer 2's scroll two of the layer's pages; All-Stars
 draws that layer in strips just ahead of its scroll ($03:A2BA, $04:9B35), so what it drew
 before the loop stays until new strips replace it, and the port draws layer 2 the same
-way, from before the loop left of the seam the strips reached. The sky's gradient is the sandbox's HDMA, replayed line by line; the
+way, from before the loop left of the seam the strips reached. The seam takes effect on
+the loop's first picture: ExecGameLoopback runs inside GameEngine's enemy loop, so the next
+frame's GameEngine hook sees VS.'s parser 64 columns behind the last one rendered, at a
+loop's first column, and notes the loop there (at the picture it first showed, which a
+rewind or state load to a later moment finds), a few frames before the parser renders that
+column; the picture in between takes the same test. Waiting for the column had shown layer
+2's new place for those frames, then the old one again: the castles' background
+flickering at each loop. The sky's gradient is the sandbox's HDMA, replayed line by line; the
 animated tiles (? blocks, coins, bushes, water, lava) are All-Stars' frames at VS.'s
 frame counter. Sprites come from VS.'s OAM, attributed to their owners by VS.'s
 sprite-data offsets (the copy of RAM the engine built them from, with one shuffler

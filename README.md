@@ -234,7 +234,9 @@ Verified (headless harness with scripted input and RAM pokes, screenshots inspec
   All-Stars' own (run in a reference emulator), the castles' with Bowser breathing fire
   in its picture; the night sky's clouds and the floating score numbers as All-Stars
   draws them (a stomped or kicked shell stays on the ground under its points); the castle loops of 5-4, 7-4 and 8-4, where the blocks, the background
-  and the bands carry on through the jump back as in All-Stars; All-Stars' own decorations
+  and the bands carry on through the jump back as in All-Stars, frame by frame from the
+  loop's first picture (in 4:3, 16:9 and 16:10, and after a state load before, during or
+  after the loop: the background no longer jumps to its new place and back); All-Stars' own decorations
   (staircases, floor ends and steps, wall caps, coral, the crowns erased, the blocks over
   5-4's and 7-4's hanging floors) on every VS. area, compared cell by cell with All-Stars'
   own areas parsed by its own parser (in the world each is played in) where the level is
