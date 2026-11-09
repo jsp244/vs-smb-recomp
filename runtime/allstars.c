@@ -109,6 +109,9 @@ static struct {
 #define CLOUD_ATTRS      0x05CEFB
 #define CLOUD_X          0x05CF1B
 #define PRINCESS_TILES   0x04DD4E   /* the princess's poses ($04:DCBB) */
+#define TOAD_HEAD        0x04F4B7   /* a Toad standing free in a scene ($04:F4B6): his head, an 8x8 tile twice (mirrored), */
+#define TOAD_BODY        0x04F4C5   /* his body below it, one 16x16 sprite ($04:F4C4), */
+#define TOAD_ATTR        0x04F4CD   /* and their attributes ($04:F4CC) */
 #define FIREWORK_TILES   0x03F53B   /* a firework's 4 rings ($03:F548), then the palettes it cycles through */
 #define FIREWORK_PALS    0x03F53F
 #define RETAINER_GFX     0x1EC000   /* the sack's OBJ tiles, then the princess's ($04:ECCA) */
@@ -128,6 +131,9 @@ static struct {
 #define VS_PLAYER_GFX    0xED74     /* PlayerGraphicsTable: the 8 tiles of each of the 26 poses */
 #define VS_ENEMY_GFX     0xE69B     /* EnemyGraphicsTable */
 #define VS_BB_BOUNDS     0xA3DF     /* BlockBuffLowBounds: per metatile group, the first one stored in the block buffer */
+#define VS_END_TOAD_OFS  0x84B9     /* the game's end ($8552): each of the seven Toads' sprite data offset (from 1), */
+#define VS_END_TOAD_Y    0x84C0     /* height */
+#define VS_END_TOAD_X    0x84C7     /* and place on the screen */
 #define VS_POWERUP_GFX   0xE61B     /* PowerUpGfxTable */
 #define VS_FLOATEY       0x867D     /* FloateyNumTileData */
 #define VS_LOOP_WORLD    0xBF84     /* LoopCmdWorldNumber, then LoopCmdPageNumber */
@@ -2196,7 +2202,7 @@ static void map_sprite_palettes(void) {
 }
 
 /* what each of VS.'s 64 sprites belongs to, from the RAM its frame was built with */
-enum { OWN_NONE, OWN_PLAYER, OWN_ENEMY, OWN_OTHER, OWN_BLOCK };
+enum { OWN_NONE, OWN_PLAYER, OWN_ENEMY, OWN_OTHER, OWN_BLOCK, OWN_TOAD };
 static uint8_t owner[64], owner_slot[64];
 static int owner_player_x;   /* the player's left edge on the picture, from the same RAM */
 
@@ -2213,7 +2219,35 @@ static void unshuffle(uint8_t *ofs, const uint8_t *r) {
     }
 }
 
-static void sprite_owners(const uint8_t *r, int ahead) {
+/* a 2x3 block of sprites at offset ofs whose first row is at x, y */
+static int block_at(const uint8_t *oam, int ofs, int x, int y) {
+    const uint8_t *s = &oam[ofs & 0xFC];
+    return ofs <= 0xE8 && s[0] == y && s[3] == x && s[4] == y && s[7] == (uint8_t)(x + 8);
+}
+/* VictoryMode in world 8, or the next mode on the frame whose picture is still its last */
+static int end_of_game(const uint8_t *r) {
+    return (r[0x0770] == 3 || r[0x0770] == 4) && r[0x075F] == 7;
+}
+/* The game's end (VS.'s $8552): up to seven Toads, each drawn by enemy slot 0's sprite routine
+   (EnemyGfxHandler, with WorldNumber 0 for Toad's tiles) at a sprite data offset, height and place of
+   its own from its tables, and once all are there one at a time left out for a while; then the slot's
+   offset is put back to the princess's ($30), after the NMI's shuffler has moved it, so that RAM no
+   longer tells where the picture's sprites of hers are. The Toads the picture shows, by their first row
+   (a tile and its mirror image) at their places: bit k for Toad k. */
+static int ending_toads(const uint8_t *r, const uint8_t *oam) {
+    if (!r || !oam || !end_of_game(r)) return 0;
+    int found = 0;
+    for (int k = 1; k <= 7; k++) {
+        int ofs = cart.prg[VS_END_TOAD_OFS + k - 0x8000];
+        const uint8_t *o = &oam[ofs & 0xFC];
+        if (block_at(oam, ofs, cart.prg[VS_END_TOAD_X + k - 0x8000], cart.prg[VS_END_TOAD_Y + k - 0x8000]) &&
+            o[5] == o[1] && (o[6] ^ o[2]) == 0x40)
+            found |= 1 << k;
+    }
+    return found;
+}
+
+static void sprite_owners(const uint8_t *r, int ahead, const uint8_t *oam) {
     uint8_t ofs[15];
     memset(owner, OWN_OTHER, sizeof owner);
     memset(owner_slot, 0, sizeof owner_slot);
@@ -2222,13 +2256,25 @@ static void sprite_owners(const uint8_t *r, int ahead) {
     owner_player_x = (int16_t)(uint16_t)((r[0x006D] << 8 | r[0x0086]) - (r[0x071A] << 8 | r[0x071C]));
     if (ahead) unshuffle(ofs, r);
     else memcpy(ofs, &r[0x06E4], sizeof ofs);
+    int toads = ending_toads(r, oam);
+    if (oam && end_of_game(r) && r[0x0F] && (r[0x16] & 0x3F) == 0x35) {   /* the princess, by her place */
+        int x = (uint8_t)((r[0x6E] << 8 | r[0x87]) - (r[0x071A] << 8 | r[0x071C])), y = r[0xCF];
+        if (!block_at(oam, ofs[1], x, y))
+            for (int o = 0; o <= 0xE8; o += 4)
+                if (block_at(oam, o, x, y)) { ofs[1] = (uint8_t)o; break; }
+    }
+    for (int k = 1; k <= 7; k++) {
+        if (!(toads >> k & 1)) continue;
+        int o = cart.prg[VS_END_TOAD_OFS + k - 0x8000] >> 2;
+        for (int j = 0; j < 6 && o + j < 64; j++) { owner[o + j] = OWN_TOAD; owner_slot[o + j] = (uint8_t)(k | (j << 4)); }
+    }
     int p = ofs[0] >> 2;
     for (int k = 0; k < 8 && p + k < 64; k++) { owner[p + k] = OWN_PLAYER; owner_slot[p + k] = (uint8_t)k; }
     for (int e = 0; e < 6; e++) {
         if (!r[0x0F + e]) continue;          /* Enemy_Flag: the slot is in use */
         int o = ofs[1 + e] >> 2;
         for (int k = 0; k < 6 && o + k < 64; k++) {
-            if (owner[o + k] == OWN_PLAYER) continue;
+            if (owner[o + k] == OWN_PLAYER || owner[o + k] == OWN_TOAD) continue;
             owner[o + k] = OWN_ENEMY; owner_slot[o + k] = (uint8_t)(e | (k << 4));
         }
     }
@@ -2553,8 +2599,13 @@ static void bridge_rubble(snesppu_t *p) {
    with them. That code runs here in a copy of the area's sandbox, once for each frame since the last
    picture, given VS.'s Toad, camera, frame counter and random bits; the sprites it writes are drawn,
    the uploads it asks its NMI for kept. All-Stars' player stops 31 pixels before him ($03:89EA; 16 more
-   in world 3), VS.'s 17, so his scene is moved right by the difference. In world 8 the princess stands
-   ($04:DCBB). */
+   in world 3), VS.'s 17, so his scene is moved right by the difference.
+   In world 8 the arcade's princess stands where she is, facing the player. All-Stars gives her a scene
+   of her own in a cage ($04:DCBB: facing away, turning, running to him) that VS. has no place for: her
+   standing pose ($04:DD4E's first) is drawn mirrored to face him, as the arcade's figure, the 32
+   pixels ending where its 24 do. At the game's end VS. adds seven Toads (VS. took that scene from
+   The Lost Levels, which All-Stars has too: its $0D:9C2B, the same tables): each is All-Stars' Toad
+   standing free, his feet where the arcade's are. */
 static sbx_t *sb_end;
 static struct {
     int live, n, level;
@@ -2606,10 +2657,42 @@ static void retainer_step(const uint8_t *r, int e) {
     }
 }
 
+/* world 8's OBJ tiles $180-$1FF: the princess's set ($04:ECCA's second), and for the Toads the head
+   from the first (the sack's) and the body in world 1's second set */
+static void princess_tiles(snesppu_t *p) {
+    static uint8_t v[0x1000];
+    static int built;
+    if (!built) {
+        uint32_t head = (rom8(TOAD_HEAD) & 0x3Fu) * 32u, b = 0x1E0000u | rom16(RETAINER_SETS);   /* head: one of $180-$1BF */
+        for (uint32_t i = 0; i < 0x800; i++) { v[i] = rom8(RETAINER_GFX + 0x1000 + i); v[0x800 + i] = rom8(b + i); }
+        for (uint32_t i = 0; i < 32; i++) v[head + i] = rom8(RETAINER_GFX + head + i);
+        built = 1;
+    }
+    memcpy(&p->vram[0xF000], v, sizeof v);
+}
+
+/* a Toad at the game's end: the arcade's 2x3 block at x, y */
+static void ending_toad(snesppu_t *p, int x, int y) {
+    princess_tiles(p);
+    uint8_t a = rom8(TOAD_ATTR);
+    int prio = (a >> 4) & 3, pal = (a >> 1) & 7;
+    uint16_t head = (uint16_t)(rom8(TOAD_HEAD) | ((a & 1) << 8)), body = (uint16_t)(rom8(TOAD_BODY) | ((a & 1) << 8));
+    add_sprite(p, x, y, head, 0, 0, 0, prio, pal);
+    add_sprite(p, x + 8, y, head, 0, 0, 1, prio, pal);
+    add_sprite(p, x, y + 8, body, 1, 0, 0, prio, pal);
+}
+
 static void draw_retainer(snesppu_t *p, const uint8_t *r, int e, int x, int y) {
     /* the castle's world and level (the area built): at the world's end VS. moves its numbers on to the next
        world a frame or two before the screen goes black */
-    int w8 = area.id[0] == 7;
+    if (area.id[0] == 7) {   /* the princess: her pose's 16x16 halves, as All-Stars' (palette 2, priority 2); so
+                                mirrored her head is in the same columns as the arcade's */
+        princess_tiles(p);
+        uint16_t t = (uint16_t)(0x100 | rom8(PRINCESS_TILES));
+        add_sprite(p, x, y - 8, t, 1, 0, 1, 2, 2);
+        add_sprite(p, x, y + 8, (uint16_t)(t + 0x20), 1, 0, 1, 2, 2);
+        return;
+    }
     int level = (area.id[0] << 8) | area.id[1];
     if (!cend.live || cend.level != level || ppu.frame - cend.frame > 600) {   /* the scene starts */
         if (!sb_end && !(sb_end = malloc(sizeof *sb_end))) return;
@@ -2618,20 +2701,14 @@ static void draw_retainer(snesppu_t *p, const uint8_t *r, int e, int x, int y) {
         w[0x0F7D] = w[0x0F7E] = w[0x0F7F] = w[0x0B9C] = w[0x0B76] = 0;
         w[0x10] = 1; w[0x1C] = 0x35; w[0x29] = 0; w[0xBC] = 1;   /* its object 0: Toad */
         w[0x0238] = r[0xCF + e];                                  /* his height, All-Stars' own from now on */
-        uint32_t a = RETAINER_GFX + (w8 ? 0x1000u : 0), b = 0x1E0000u | rom16(RETAINER_SETS + area.id[0] * 2u);
-        for (uint32_t i = 0; i < 0x800; i++) { cend.vram[i] = rom8(a + i); cend.vram[0x800 + i] = rom8(b + i); }
+        uint32_t b = 0x1E0000u | rom16(RETAINER_SETS + area.id[0] * 2u);
+        for (uint32_t i = 0; i < 0x800; i++) { cend.vram[i] = rom8(RETAINER_GFX + i); cend.vram[0x800 + i] = rom8(b + i); }
         cend.live = 1;
         cend.level = level;
         cend.fc = (uint8_t)(r[0x09] - 1);
     }
     cend.frame = ppu.frame;
     memcpy(&p->vram[0xF000], cend.vram, sizeof cend.vram);
-    if (w8) {
-        uint16_t t = (uint16_t)(0x100 | rom8(PRINCESS_TILES));
-        add_sprite(p, x + 7, y, t, 1, 0, 0, 2, 2);
-        add_sprite(p, x + 7, y + 16, (uint16_t)(t + 0x20), 1, 0, 0, 2, 2);
-        return;
-    }
     if (cend.fc != r[0x09]) retainer_step(r, e);
     for (int n = 0; n < cend.n && p->nspr < (int)(sizeof p->spr / sizeof p->spr[0]); n++) p->spr[p->nspr++] = cend.spr[n];
 }
@@ -2745,7 +2822,7 @@ static void build_sprites(snesppu_t *p, const uint8_t *r, int ahead, int screen,
     p->nspr = 0;
     int screen_pose = -1, picture = !real && !screen;
     if (screen) screen_pose = screen_owners();
-    else sprite_owners(r, ahead);
+    else sprite_owners(r, ahead, oam);
     if (picture) memset(picture_kind, SP_NONE, sizeof picture_kind);
     player_tiles(p, r, screen_pose);
     player_colors(p, r ? r : ram);
@@ -2778,6 +2855,10 @@ static void build_sprites(snesppu_t *p, const uint8_t *r, int ahead, int screen,
             uint16_t t = rom8(FLOATEY_TILES + (uint32_t)k);
             if ((k & 1) && t == 0x0E) t = 0x10E;
             add_sprite(p, o[3] + dx, o[0] + 1, t, (k & 1) && c >= 6 && c != 0x0B, 0, 0, 3, 1);
+            continue;
+        }
+        if (owner[i] == OWN_TOAD) {   /* a Toad at the game's end: one figure for the 2x3 block, from its first sprite */
+            if (!(owner_slot[i] >> 4)) ending_toad(p, o[3] + dx, o[0] + 1);
             continue;
         }
         if (owner[i] == OWN_ENEMY && r && !screen) {
@@ -2976,6 +3057,20 @@ static int nt_shown(int nt, int row, int col) {
     uint8_t bd = ppu.palette[0] & 0x3F;
     return (pal[1] & 0x3F) != bd || (pal[2] & 0x3F) != bd || (pal[3] & 0x3F) != bd;
 }
+/* the same for a glyph, by the colours its pixels have: at the game's end VS. turns the backdrop to the
+   colour its messages are drawn in, all but THANK YOU MARIO! ($84CF) */
+static int glyph_shown(int nt, int row, int col, uint8_t t) {
+    const uint8_t *pal = &ppu.palette[nt_pal(nt, row, col) * 4];
+    uint8_t px[8];
+    int used = 0;
+    for (int y = 0; y < 8; y++) {
+        nes_bg_row(t, y, px);
+        for (int x = 0; x < 8; x++) used |= 1 << px[x];
+    }
+    for (int k = 1; k < 4; k++)
+        if ((used >> k & 1) && (pal[k] & 0x3F) != (ppu.palette[0] & 0x3F)) return 1;
+    return 0;
+}
 /* VS.'s font: digits $00-$09, letters $0A-$23, '-', 'x', '!', the coin, '.' and the copyright sign;
    no level metatile uses these tiles, so wherever they are in a nametable they are text */
 static int vs_text(uint8_t t) { return t <= 0x23 || t == 0x28 || t == 0x29 || t == 0x2B || t == 0x2E || t == 0xAF || t == 0xCF; }
@@ -3051,7 +3146,7 @@ static void level_text(snesppu_t *p, int title) {
         const uint8_t *cells = nt_cells(nt);
         for (int row = 4; row < 30; row++) {
             uint8_t t = cells[row * 32 + col];
-            if (!vs_text(t) || t == 0x2E || !nt_shown(nt, row, col)) continue;
+            if (!vs_text(t) || t == 0x2E || !glyph_shown(nt, row, col, t)) continue;
             uint16_t pal = (uint16_t)(((title && row == 15) ? 1 : 2) << 10);   /* the copyright line, the rest */
             uint16_t word;
             if (t == 0xCF) word = pal | 0x22F;

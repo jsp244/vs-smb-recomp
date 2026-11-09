@@ -492,9 +492,16 @@ tiles, also on the frame that sets them, which the copy of RAM from before GameE
 does not know, and never gives the object's place: a stomped or kicked shell stays on the
 ground under its points instead of following them up. At a castle's end All-Stars' own retainer code runs in a copy of
 the area's sandbox once a frame (Toad tied up in a sack that wobbles, then its scene
-for each world), with VS.'s Toad, camera and frame counter, and its sprites are drawn;
-the princess stands as All-Stars draws her. VictoryMode runs no GameEngine, so there
-the owners come from RAM, a shuffler step ahead. `snesppu.c` then draws mode 1 with
+for each world), with VS.'s Toad, camera and frame counter, and its sprites are drawn.
+The princess is All-Stars' standing pose mirrored to face the player as the arcade's
+does (All-Stars' own scene has her in a cage, facing away until she turns), her feet
+where the arcade's are; at the game's end the seven Toads VS. adds around them ($8552,
+the scene of The Lost Levels, which All-Stars has as well: $0D:9C2B, the same tables)
+are All-Stars' Toad standing free, at the arcade's places and left out in its turns.
+VictoryMode runs no GameEngine, so there the owners come from RAM, a shuffler step
+ahead; $8552 puts the princess's sprite data offset back after the shuffler has moved
+it, so in world 8 her sprites are also found by her place, and the Toads by theirs
+(its tables). `snesppu.c` then draws mode 1 with
 All-Stars' priorities, windows and colour math (layers 2 and 3 on the subscreen,
 added to the backdrop; under water instead the fixed colour's gradient, added to
 layers 1 and 2, the sprites of palettes 4-7 and the backdrop inside window 2: all 256
@@ -520,7 +527,9 @@ that height (outline, fill, the red band, the shadow), chosen by its distance fr
 the letter's edge; the same rule turns the arcade's U into All-Stars' U but for 6 of its
 256 lower pixels. The banner and the title's text scroll away with the demo, column by
 column, as the arcade's nametable loses them. Text in a level (the title's lines, the
-castles' messages) is VS.'s nametable text in All-Stars' layer 1 font. The screens only
+castles' messages) is VS.'s nametable text in All-Stars' layer 1 font, left out where the
+colours its glyph's pixels have are the backdrop's: at the game's end VS. turns the
+backdrop to its messages' colour, all but THANK YOU MARIO!'s ($84CF). The screens only
 the arcade has (PUSH BUTTON, the continue countdown, game over, the coin and credit
 lines, the attract's high scores, the name entry) are VS.'s text in All-Stars' layer 3
 font on the intermission's backdrop, lines the arcade blinks blinking with it; white

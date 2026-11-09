@@ -251,7 +251,7 @@ Verified (headless harness with scripted input and RAM pokes, screenshots inspec
   on the arcade's frame, All-Stars' rubble sprite for sprite), his roar from the bridge's
   first piece through his fall (All-Stars' frames 6 and 5 by turns, frame for frame with
   All-Stars in 1-4, 6-4 and 8-4, facing either way), his flame, the castle's
-  end with Toad's sack (1-4) and the princess (8-4),
+  end with Toad's sack (1-4) and the princess (8-4), the game's end with its seven Toads,
   Podoboos, Bullet Bills, shells still and kicked, a vine, the cloud lift, springboards,
   Bloopers, Cheep-cheeps, Hammer Bros, Lakitu and Spinies, defeated enemies falling upside
   down, the water's surface; blocks hit from below in 1-1 and 1-2 (a ? block with a coin, the
