@@ -515,11 +515,22 @@ the letter's edge; the same rule turns the arcade's U into All-Stars' U but for 
 column, as the arcade's nametable loses them. Text in a level (the title's lines, the
 castles' messages) is VS.'s nametable text in All-Stars' layer 1 font. The screens only
 the arcade has (PUSH BUTTON, the continue countdown, game over, the coin and credit
-lines) are VS.'s text in All-Stars' layer 3 font on the intermission's backdrop, lines
-the arcade blinks blinking with it; the cabinet's buttons and the timer's box are the
-arcade's pixels and colours, lit from the top left, shaded at the bottom right and
-outlined in a dark shade of their colour, as All-Stars draws its sprites; Mario there is
-All-Stars' frame for the pose VS. draws.
+lines, the attract's high scores, the name entry) are VS.'s text in All-Stars' layer 3
+font on the intermission's backdrop, lines the arcade blinks blinking with it; white
+text keeps the font's colours, other colours (the top three scores, the name entry's
+lines) get the font's shades of theirs in layer 3's palettes 4-7. The rest of the
+nametable that is not text (the cabinet's buttons, the timer's box, the brick frames,
+the apostrophe, RUB and END) and the sprites All-Stars has no art for (the high scores'
+heads, the name entry's cursor) are the arcade's pixels and colours, lit from the top
+left, shaded at the bottom right and outlined in a dark shade of their colour, as
+All-Stars draws its sprites, put on layer 1 in whole cells: cells that come out the
+same share a tile (the brick frames are a few hundred cells of a few tiles), and the
+tiles share BG palettes 2-7 as their colours fit. Mario there is All-Stars' frame for
+the pose VS. draws. VS. writes its PUSH BUTTON screen over the title's level without
+moving the scroll, so that screen is told by its OperMode (1, from task 3: on the frame
+before, the title still shows, banner and all). While the screen is off the picture is
+black, as the SNES shows its forced blank; the arcade shows its backdrop's colour, which
+between the attract's parts is the sky for a frame.
 
 **Music.** All-Stars' music is its own sound program on an emulated SNES sound unit,
 `spc700.c`: LakeSnes's SPC700, timers, ports and S-DSP (github.com/angelo-wf/LakeSnes,

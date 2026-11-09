@@ -33,9 +33,10 @@
  * The screens that are not a level run in a second sandbox: the intermission is All-Stars' own
  * (its player head, world picture and text routines), the title is All-Stars' banner (its
  * DrawTitleScreen) moved to VS.'s place with "VS." put in front, and the screens only the arcade has
- * (PUSH BUTTON, the continue countdown, game over, the coin and credit lines) are VS.'s text in
- * All-Stars' fonts on the intermission's backdrop. What All-Stars has no art for is made from the
- * nearest art it has: the V from its U (make_v), the cabinet's buttons and the timer's box from the
+ * (PUSH BUTTON, the continue countdown, game over, the coin and credit lines, the high scores, the
+ * name entry) are VS.'s text in All-Stars' fonts (in the arcade's colours) on the intermission's
+ * backdrop. What All-Stars has no art for is made from the nearest art it has: the V from its U
+ * (make_v), the cabinet's buttons, the timer's box, the brick frames and the players' heads from the
  * arcade's pixels, lit and outlined as All-Stars draws (screen_icons).
  *
  * Addresses below are those of the USA ROM (and the Wii and Switch Online copies, whose banks $03-$0C
@@ -2972,7 +2973,7 @@ static void put_bg1(snesppu_t *p, int row, int col, uint16_t word) {
 }
 
 /* layer 1 tiles that are blank and that nothing on layers 1 and 2 uses: room for the new pictures,
-   in the copy of the PPU a frame is drawn from */
+   in the copy of the PPU a frame is drawn from; how many of the n asked for there are */
 static int free_tiles(const snesppu_t *p, int n, uint16_t *out) {
     static uint8_t used[1024];
     memset(used, 0, sizeof used);
@@ -2993,7 +2994,7 @@ static int free_tiles(const snesppu_t *p, int n, uint16_t *out) {
         for (int i = 0; i < 32 && blank; i++) if (d[i]) blank = 0;
         if (blank) out[k++] = (uint16_t)t;
     }
-    return k == n;
+    return k;
 }
 
 /* The arcade's text over a level (the title's lines, the castles' messages) in All-Stars' layer 1
@@ -3132,7 +3133,7 @@ static void title_banner(snesppu_t *p) {
     if (as_title_state != 1) return;
     make_v(p);
     uint16_t slot[4];
-    int have_v = v_state == 1 && free_tiles(p, 4, slot);
+    int have_v = v_state == 1 && free_tiles(p, 4, slot) == 4;
     if (have_v)
         for (int k = 0; k < 4; k++) put_tile4(p, slot[k], v_lower[k]);
     for (int c = 0; c < 22; c++) {
@@ -3160,84 +3161,210 @@ static uint32_t shade(uint32_t rgb, int num, int den, uint32_t to) {
     return out;
 }
 
-static void screen_icons(snesppu_t *p, int nt) {
+/* a row of VS.'s sprite tile (8x8 sprites, the frame's pattern table) */
+static void nes_spr_row(uint8_t tile, int y, uint8_t out[8]) {
+    uint16_t a = (uint16_t)(((ppu.frame_ctrl & 0x08) ? 0x1000 : 0) + tile * 16 + y);
+    const uint8_t *chr = mapper_chr_bank_ptr(ppu.frame_chr_bank[a >> 10]);
+    uint8_t p0 = chr[a & 0x3FF], p1 = chr[(a + 8) & 0x3FF];
+    for (int x = 0; x < 8; x++) out[x] = (uint8_t)(((p0 >> (7 - x)) & 1) | (((p1 >> (7 - x)) & 1) << 1));
+}
+
+static uint64_t fnv64(uint64_t h, const void *d, size_t n) {
+    const uint8_t *b = d;
+    for (size_t i = 0; i < n; i++) { h ^= b[i]; h *= 0x100000001B3ull; }
+    return h;
+}
+
+static int nearest(uint32_t c, const uint32_t *pal, int n) {   /* 1 + the index of pal's colour nearest c */
+    long bd = -1;
+    int best = 0;
+    for (int k = 0; k < n; k++) {
+        long d = 0;
+        for (int s = 0; s < 24; s += 8) { long e = (long)((c >> s) & 255) - (long)((pal[k] >> s) & 255); d += e * e; }
+        if (bd < 0 || d < bd) { bd = d; best = k + 1; }
+    }
+    return best;
+}
+
+/* The pictures go on layer 1 in whole cells: the background's cells that are not text, and the cells the
+   sprites All-Stars has no art for cover (icon_spr: the high scores' heads). A cell that comes out the same
+   as another is the same tile (the high scores' brick frame is a few hundred cells of a few tiles), and the
+   tiles share palettes 7 down to 2 (15 colours each; nothing else uses them on these screens) as they fit.
+   Built again only when the screen changes. */
+#define ICON_CELLS (30 * 32)
+#define ICON_PALS 6
+static struct {
+    uint64_t key;
+    int ncell, nuniq, npals;
+    int16_t cell[ICON_CELLS][2];
+    uint16_t uniq_of[ICON_CELLS];
+    uint8_t px[ICON_CELLS][8][8];      /* each different tile's colour numbers in its palette */
+    uint8_t pal_of[ICON_CELLS];        /* ... and that palette (0 = palette 7, 1 = palette 6...) */
+    uint32_t pal[ICON_PALS][15];
+    int npal[ICON_PALS];
+} icons;
+
+static void build_icons(int nt, const uint8_t icon_spr[64]) {
     static uint8_t val[240][256];
     static uint32_t col[240][256];
-    static uint32_t rgb[240][256];
-    int cells[64][2], ncell = 0;
+    static uint8_t mark[30][32];
+    static uint32_t tc[ICON_CELLS][64];   /* the different tiles' colours (0x1000000: none) */
     const uint8_t *n = nt_cells(nt);
+    uint64_t key = fnv64(0xCBF29CE484222325ull, n, 0x400);
+    key = fnv64(key, ppu.palette, 32);
+    key = fnv64(key, ppu.frame_chr_bank, sizeof ppu.frame_chr_bank);
+    uint8_t ctl = ppu.frame_ctrl & 0x18;
+    key = fnv64(key, &ctl, 1);
+    for (int i = 0; i < 64; i++) if (icon_spr[i]) key = fnv64(fnv64(key, &i, sizeof i), &ppu.oam[i * 4], 4);
+    if (key == icons.key) return;
+    icons.key = key;
+    icons.ncell = icons.nuniq = icons.npals = 0;
     memset(val, 0, sizeof val);
+    memset(mark, 0, sizeof mark);
     for (int row = 0; row < 30; row++)
         for (int c = 0; c < 32; c++) {
             uint8_t t = n[row * 32 + c];
-            if (t == 0x24 || vs_text(t) || !nt_shown(nt, row, c) || ncell >= 64) continue;
+            if (t == 0x24 || vs_text(t) || !nt_shown(nt, row, c)) continue;
             uint8_t px[8];
-            int any = 0;
             for (int y = 0; y < 8; y++) {
                 nes_bg_row(t, y, px);
                 for (int x = 0; x < 8; x++) {
                     val[row * 8 + y][c * 8 + x] = px[x];
                     col[row * 8 + y][c * 8 + x] = nes_color(ppu.palette[nt_pal(nt, row, c) * 4 + px[x]]);
-                    any |= px[x];
+                    if (px[x]) mark[row][c] = 1;
                 }
             }
-            if (any) { cells[ncell][0] = row; cells[ncell][1] = c; ncell++; }
         }
-    if (!ncell) return;
-    uint16_t slot[64];
-    if (!free_tiles(p, ncell, slot)) return;
-    /* the pixels' colours, then at most 15 of them for palette 7 */
-    uint32_t pal[15];
-    int npal = 0;
-    for (int i = 0; i < ncell; i++)
-        for (int y = 0; y < 8; y++)
+    for (int i = 0; i < 64; i++) {
+        if (!icon_spr[i]) continue;
+        const uint8_t *o = &ppu.oam[i * 4];
+        int top = o[0] + 1, left = o[3], hf = (o[2] >> 6) & 1, vf = (o[2] >> 7) & 1, pal = o[2] & 3;
+        uint8_t px[8];
+        for (int y = 0; y < 8; y++) {
+            nes_spr_row(o[1], vf ? 7 - y : y, px);
             for (int x = 0; x < 8; x++) {
-                int py = cells[i][0] * 8 + y, px_ = cells[i][1] * 8 + x;
-                uint32_t c = 0x1000000;   /* none */
-                if (val[py][px_]) {
-                    int lit = (py == 0 || !val[py - 1][px_]) || (px_ == 0 || !val[py][px_ - 1]);
-                    int dark = (py == 239 || !val[py + 1][px_]) || (px_ == 255 || !val[py][px_ + 1]);
-                    c = col[py][px_];
-                    if (lit && !dark) c = shade(c, 2, 5, 0xFFFFFF);
-                    else if (dark && !lit) c = shade(c, 2, 5, 0);
-                } else {
-                    /* the outline: a dark shade of the darkest colour beside it */
-                    int lum = 1 << 30;
-                    for (int dy = -1; dy <= 1; dy++)
-                        for (int dx = -1; dx <= 1; dx++) {
-                            int yy = py + dy, xx = px_ + dx;
-                            if (yy < 0 || yy >= 240 || xx < 0 || xx >= 256 || !val[yy][xx]) continue;
-                            uint32_t n = col[yy][xx];
-                            int l = (int)(((n >> 16) & 255) * 3 + ((n >> 8) & 255) * 6 + (n & 255));
-                            if (l < lum) { lum = l; c = shade(n, 7, 10, 0); }
-                        }
-                }
-                rgb[py][px_] = c;
-                if (c > 0xFFFFFF) continue;
-                int k;
-                for (k = 0; k < npal && pal[k] != c; k++) {}
-                if (k == npal && npal < 15) pal[npal++] = c;
+                uint8_t v = px[hf ? 7 - x : x];
+                int yy = top + y, xx = left + x;
+                if (!v || yy >= 240 || xx >= 256) continue;
+                val[yy][xx] = v;
+                col[yy][xx] = nes_color(ppu.palette[16 + pal * 4 + v]);
+                mark[yy >> 3][xx >> 3] = 1;
             }
-    for (int k = 0; k < npal; k++) p->cgram[7 * 16 + 1 + k] = to_bgr15(pal[k]);
-    for (int i = 0; i < ncell; i++) {
-        uint8_t px[8][8];
-        for (int y = 0; y < 8; y++)
-            for (int x = 0; x < 8; x++) {
-                uint32_t c = rgb[cells[i][0] * 8 + y][cells[i][1] * 8 + x];
-                int best = 0;
-                if (c <= 0xFFFFFF) {
-                    long bd = -1;
-                    for (int k = 0; k < npal; k++) {
-                        long d = 0;
-                        for (int s = 0; s < 24; s += 8) { long e = (long)((c >> s) & 255) - (long)((pal[k] >> s) & 255); d += e * e; }
-                        if (bd < 0 || d < bd) { bd = d; best = k + 1; }
-                    }
-                }
-                px[y][x] = (uint8_t)best;
-            }
-        put_tile4(p, slot[i], px);
-        put_bg1(p, cells[i][0], cells[i][1], (uint16_t)(0x1C00 | slot[i]));
+        }
     }
+    for (int row = 0; row < 30; row++)
+        for (int c = 0; c < 32; c++) {
+            if (!mark[row][c]) continue;
+            /* the cell's colours: lit, shaded and outlined */
+            uint32_t cc[64];
+            for (int y = 0; y < 8; y++)
+                for (int x = 0; x < 8; x++) {
+                    int py = row * 8 + y, px_ = c * 8 + x;
+                    uint32_t k = 0x1000000;   /* none */
+                    if (val[py][px_]) {
+                        int lit = (py == 0 || !val[py - 1][px_]) || (px_ == 0 || !val[py][px_ - 1]);
+                        int dark = (py == 239 || !val[py + 1][px_]) || (px_ == 255 || !val[py][px_ + 1]);
+                        k = col[py][px_];
+                        if (lit && !dark) k = shade(k, 2, 5, 0xFFFFFF);
+                        else if (dark && !lit) k = shade(k, 2, 5, 0);
+                    } else {
+                        /* the outline: a dark shade of the darkest colour beside it */
+                        int lum = 1 << 30;
+                        for (int dy = -1; dy <= 1; dy++)
+                            for (int dx = -1; dx <= 1; dx++) {
+                                int yy = py + dy, xx = px_ + dx;
+                                if (yy < 0 || yy >= 240 || xx < 0 || xx >= 256 || !val[yy][xx]) continue;
+                                uint32_t nb = col[yy][xx];
+                                int l = (int)(((nb >> 16) & 255) * 3 + ((nb >> 8) & 255) * 6 + (nb & 255));
+                                if (l < lum) { lum = l; k = shade(nb, 7, 10, 0); }
+                            }
+                    }
+                    cc[y * 8 + x] = k;
+                }
+            int u;
+            for (u = 0; u < icons.nuniq && memcmp(tc[u], cc, sizeof cc); u++) {}
+            if (u == icons.nuniq) memcpy(tc[icons.nuniq++], cc, sizeof cc);
+            icons.cell[icons.ncell][0] = (int16_t)row;
+            icons.cell[icons.ncell][1] = (int16_t)c;
+            icons.uniq_of[icons.ncell++] = (uint16_t)u;
+        }
+    /* each different tile into the first palette its colours fit, else a new one, else the one it shares the
+       most colours with (the rest drawn in its nearest) */
+    for (int u = 0; u < icons.nuniq; u++) {
+        uint32_t set[64];
+        int ns = 0;
+        for (int i = 0; i < 64; i++) {
+            uint32_t k = tc[u][i];
+            if (k > 0xFFFFFF) continue;
+            int j;
+            for (j = 0; j < ns && set[j] != k; j++) {}
+            if (j == ns) set[ns++] = k;
+        }
+        int pick = -1, closest = 0, fewest = 1 << 30;
+        for (int q = 0; q < icons.npals && pick < 0; q++) {
+            int missing = 0;
+            for (int j = 0; j < ns; j++) {
+                int k;
+                for (k = 0; k < icons.npal[q] && icons.pal[q][k] != set[j]; k++) {}
+                missing += k == icons.npal[q];
+            }
+            if (icons.npal[q] + missing <= 15) pick = q;
+            else if (missing < fewest) { fewest = missing; closest = q; }
+        }
+        if (pick < 0) pick = icons.npals < ICON_PALS ? icons.npals++ : closest;
+        for (int j = 0; j < ns; j++) {
+            int k;
+            for (k = 0; k < icons.npal[pick] && icons.pal[pick][k] != set[j]; k++) {}
+            if (k == icons.npal[pick] && icons.npal[pick] < 15) icons.pal[pick][icons.npal[pick]++] = set[j];
+        }
+        icons.pal_of[u] = (uint8_t)pick;
+        for (int i = 0; i < 64; i++)
+            icons.px[u][i >> 3][i & 7] = (uint8_t)(tc[u][i] > 0xFFFFFF ? 0 : nearest(tc[u][i], icons.pal[pick], icons.npal[pick]));
+    }
+}
+
+static void screen_icons(snesppu_t *p, int nt, const uint8_t icon_spr[64]) {
+    build_icons(nt, icon_spr);
+    if (!icons.ncell) return;
+    static uint16_t slot[ICON_CELLS];
+    int nslot = free_tiles(p, icons.nuniq, slot);
+    for (int q = 0; q < icons.npals; q++)
+        for (int k = 0; k < icons.npal[q]; k++) p->cgram[(7 - q) * 16 + 1 + k] = to_bgr15(icons.pal[q][k]);
+    for (int u = 0; u < nslot; u++) put_tile4(p, slot[u], icons.px[u]);
+    for (int i = 0; i < icons.ncell; i++) {
+        int u = icons.uniq_of[i];
+        if (u < nslot) put_bg1(p, icons.cell[i][0], icons.cell[i][1], (uint16_t)(((7 - icons.pal_of[u]) << 10) | slot[u]));
+    }
+}
+
+/* the arcade's colour of a line of text: the commonest colour of a glyph's pixels */
+static uint8_t text_colour(int nt, int row, int c, uint8_t t) {
+    static int8_t ink[256];
+    static bool known[256];
+    if (!known[t]) {
+        int count[4] = { 0, 0, 0, 0 };
+        uint8_t px[8];
+        for (int y = 0; y < 8; y++) {
+            nes_bg_row(t, y, px);
+            for (int x = 0; x < 8; x++) count[px[x]]++;
+        }
+        ink[t] = 1;
+        for (int k = 2; k < 4; k++) if (count[k] > count[ink[t]]) ink[t] = (int8_t)k;
+        known[t] = true;
+    }
+    return (uint8_t)(ppu.palette[nt_pal(nt, row, c) * 4 + ink[t]] & 0x3F);
+}
+
+/* All-Stars' font (layer 3's palette 0) in the shades of another colour: as bright relative to it as the
+   font's own colours are to their brightest */
+static void tint_font(snesppu_t *p, int pal, uint32_t to) {
+    int lum[4], lmax = 1;
+    for (int j = 1; j < 4; j++) {
+        uint16_t c = p->cgram[j];
+        lum[j] = (c & 31) * 3 + ((c >> 5) & 31) * 6 + ((c >> 10) & 31);
+        if (lum[j] > lmax) lmax = lum[j];
+    }
+    for (int j = 1; j < 4; j++) p->cgram[pal * 4 + j] = to_bgr15(shade(to, lmax - lum[j], lmax, 0));
 }
 
 /* a screen with no level: All-Stars' intermission backdrop and font (the screens' sandbox), VS.'s
@@ -3262,16 +3389,47 @@ static int render_text_screen(uint32_t *out, int stride, int x, int y, int w, in
             p.vram[a] = 0x24; p.vram[a + 1] = 0;
         }
     }
+    /* the text in the arcade's colours: white (and light grey) in All-Stars' font as it is, up to four
+       others in the font's shades of theirs (layer 3's palettes 4-7, BG palette 1, which nothing uses here) */
+    static uint8_t tcol[30][32];
+    int8_t tpal[64];
+    memset(tpal, -1, sizeof tpal);
+    int next = 4;
+    for (int row = 0; row < 30; row++)
+        for (int c = 0; c < 32; c++) {
+            uint8_t t = n[row * 32 + c];
+            tcol[row][c] = 0xFF;
+            if (!vs_text(t) || !nt_shown(nt, row, c)) continue;
+            uint8_t k = tcol[row][c] = text_colour(nt, row, c, t);
+            uint32_t rgb = nes_color(k);
+            if (tpal[k] >= 0 || next > 7 || (((rgb >> 16) & 255) >= 0xA0 && ((rgb >> 8) & 255) >= 0xA0 && (rgb & 255) >= 0xA0)) continue;
+            tpal[k] = (int8_t)next;
+            tint_font(&p, next++, rgb);
+        }
     for (int row = 0; row < 32; row++)
         for (int c = 0; c < 64; c++) {
             uint16_t word = 0x2028;
-            if (row < 30 && c < 32 && vs_text(n[row * 32 + c]) && nt_shown(nt, row, c)) word = hud_word(n[row * 32 + c]);
+            if (row < 30 && c < 32 && tcol[row][c] != 0xFF) {
+                word = hud_word(n[row * 32 + c]);
+                if (!(word & 0x1C00) && tpal[tcol[row][c]] >= 0) word |= (uint16_t)(tpal[tcol[row][c]] << 10);
+            }
             uint32_t a = ((uint32_t)(0x5800 + (c >> 5) * 0x400 + row * 32 + (c & 31)) & 0x7FFF) * 2;
             p.vram[a] = (uint8_t)word; p.vram[a + 1] = (uint8_t)(word >> 8);
         }
-    screen_icons(&p, nt);
+    /* the sprites All-Stars has no art for (not the player, nor one it draws as its own object): drawn
+       with the pictures on layer 1, and left out of the sprites (the high scores' heads were other tiles) */
+    uint8_t icon_spr[64], oam[256];
+    memcpy(oam, ppu.oam, sizeof oam);
+    screen_owners();
+    for (int i = 0; i < 64; i++) {
+        snes_sprite_t dummy = { 0 };
+        int sp;
+        icon_spr[i] = owner[i] == OWN_OTHER && oam[i * 4] < 0xEF && misc_sprite(&dummy, oam[i * 4 + 1], oam[i * 4 + 2], &sp) < 0;
+        if (icon_spr[i]) oam[i * 4] = 0xF8;
+    }
+    screen_icons(&p, nt, icon_spr);
     for (int b = 0; b < 4; b++) { p.hofs[b] = 0; p.vofs[b] = 0; }
-    build_sprites(&p, ram, 0, 1, ppu.oam, 0, NULL, 0);
+    build_sprites(&p, ram, 0, 1, oam, 0, NULL, 0);
     for (int line = y; line < y + h && line < 240; line++)
         screen_line(&p, line, x, w, out + (size_t)(line - y) * (size_t)stride);
     return 1;
@@ -3280,11 +3438,21 @@ static int render_text_screen(uint32_t *out, int stride, int x, int y, int w, in
 int allstars_render(uint32_t *out, int stride, int x, int y, int w, int h) {
     if (!allstars_enabled || !as.rom) return 0;
     forget_left_behind();
-    if (!(ppu.line_emph[120] & 0x18)) return 0;   /* the screen is off (for the picture's lines, not just at its end) */
+    if (!(ppu.line_emph[120] & 0x18)) {
+        /* the screen is off (for the picture's lines, not just at its end): black, as the SNES shows its
+           forced blank; the arcade shows its backdrop's colour, which between the attract's parts is the
+           sky for a frame, a flash of the arcade's blue in All-Stars' picture */
+        for (int line = 0; line < h; line++)
+            for (int px = 0; px < w; px++) out[(size_t)line * (size_t)stride + (size_t)px] = 0xFF000000u;
+        return 1;
+    }
     if (ram[0x0770] == 2 && !widescreen_level_window(&(int){0}, &(int){0}) && (nt_has(9, "WORLD") || nt_has(10, "WORLD") || nt_has(11, "WORLD") || nt_has(12, "WORLD")))
         return render_intermission(out, stride, x, y, w, h);
     int lo, hi;
-    if (!widescreen_level_window(&lo, &hi)) return render_text_screen(out, stride, x, y, w, h);
+    /* VS.'s PUSH BUTTON screen (OperMode 1, from its task 3: the first shows the title a frame longer, the
+       next two have the screen off) is written over the title's level without moving the scroll */
+    if ((ram[0x0770] == 1 && ram[0x0772] >= 3) || !widescreen_level_window(&lo, &hi))
+        return render_text_screen(out, stride, x, y, w, h);
     if (area.resync || (!area.ready && !area.pending)) resync();
     if (!area.ready || !built_area_shown()) return 0;
     /* after a jump, black before the area's start but after a castle loop by the visit's loops seen up to this
@@ -3327,8 +3495,10 @@ int allstars_render(uint32_t *out, int stride, int x, int y, int w, int h) {
        SpriteShuffler still runs, so RAM is a frame ahead of the picture's sprites like a copy of this
        frame's GameEngine */
     if (!shown) { shown = ram; ahead = 1; }
-    level_text(&p, ram[0x0770] == 0);
-    if (ram[0x0770] == 0) title_banner(&p);
+    /* the title (OperMode 0; a coin's OperMode 1 shows it for one more frame before the screen goes off) */
+    int title = ram[0x0770] == 0 || (ram[0x0770] == 1 && ram[0x0772] < 3);
+    level_text(&p, title);
+    if (title) title_banner(&p);
     /* the sprites of the picture, and beside it those the game builds there (widescreen) */
     static snes_sprite_t lists[3][128 + 64];
     int counts[3] = { 0, 0, 0 };

@@ -66,9 +66,10 @@ the player (fire, Luigi, the star's cycle), enemies, items, fireballs, coins, ha
 and blocks. What All-Stars has no art for is drawn the way All-Stars would have it: the
 title's banner is All-Stars' with "VS." in front (its S and dot, and a V made from its
 U by the rule that makes the arcade's V from the arcade's U), the coin, credit,
-PUSH BUTTON, continue and game-over screens use All-Stars' backdrop and font, and the
-cabinet's buttons and the continue timer's box are the arcade's pixels lit and
-outlined in All-Stars' manner. The widescreen views work with it (the objects beside
+PUSH BUTTON, continue, game-over, high-score and name-entry screens use All-Stars'
+backdrop and font in the arcade's text colours, and the cabinet's buttons, the timer's
+box, the high scores' brick frames and the players' heads there are the arcade's pixels
+lit and outlined in All-Stars' manner. The widescreen views work with it (the objects beside
 the picture and the walk into the left band included). All-Stars also dressed its own
 levels with objects VS.'s level data does not have: its castles' first staircase as
 smooth steps, rounded ends wherever a floor stops at a gap, steps between floors of two
@@ -212,7 +213,9 @@ Verified (headless harness with scripted input and RAM pokes, screenshots inspec
   input): the overworld by day, night and snow, underground, underwater, the castles
   (lava, fire bars, lifts), the treetop and mushroom levels, Lakitu, Bullet Bill and
   Hammer Bro stages; the title with its banner and the demo scrolling it away, the
-  PUSH BUTTON, intermission, game-over and continue screens; 16:9 with the objects
+  PUSH BUTTON, intermission, game-over and continue screens, the attract's high scores
+  and the name entry for a top score (poked), every frame of the attract and of the
+  coin-op session drawn (the screen's off frames black); 16:9 with the objects
   beside the picture, the walk into the left band (Mario small, big and fiery whole as he
   crosses the picture's edge, in 16:9 and in the Deck's 16:10 Integer view, as are the
   objects crossing either edge) and, under water, the tint and the
@@ -278,8 +281,9 @@ Verified (headless harness with scripted input and RAM pokes, screenshots inspec
   Windows and in the Linux and Deck builds; the same sound bit for bit on Linux as on
   Windows; the Android APKs build with it
 
-Not yet verified: a full play-through to the ending by a person, the name entry for a
-top score, and two-player games beyond starting one. In the remastered graphics: a
+Not yet verified: a full play-through to the ending by a person, a name entered for a
+top score with the controls (the screen was checked with a score poked), and two-player
+games beyond starting one. In the remastered graphics: a
 coin heaven itself (the cloud lift was checked on a lift drawn as one), Toad's scenes
 in worlds 2-7 (All-Stars' own code runs them, as it does world 1's, which was checked),
 and a real window on the Deck in Game Mode. All-Stars' music has not been listened to
