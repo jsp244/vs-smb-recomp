@@ -43,11 +43,12 @@ int http_request(const http_request_t *rq, http_response_t *rs) {
 
 /* a release v1.2.0 with the package (listed as size bytes, with GitHub's digest when there is
    one) and, when sums is given, a SHA256SUMS file */
+static const char *fake_published = "2026-11-05T10:00:00Z";
 static void fake_release(const char *asset_url, long long size, const char *digest, const char *sums) {
     int n = snprintf(fake_json, sizeof fake_json,
         "{\"url\":\"https://api.github.com/repos/owner/vs-smb-recomp/releases/1\",\"tag_name\":\"v1.2.0\",\"draft\":false,"
-        "\"html_url\":\"https://github.com/owner/vs-smb-recomp/releases/tag/v1.2.0\",\"published_at\":\"2026-11-05T10:00:00Z\","
-        "\"body\":\"What's new: \\\"quotes\\\", braces { } and [brackets]\",\"assets\":[");
+        "\"html_url\":\"https://github.com/owner/vs-smb-recomp/releases/tag/v1.2.0\",\"published_at\":\"%s\","
+        "\"body\":\"What's new: \\\"quotes\\\", braces { } and [brackets]\",\"assets\":[", fake_published);
     if (sums) n += snprintf(fake_json + n, sizeof fake_json - n,
         "{\"name\":\"SHA256SUMS\",\"size\":%d,\"state\":\"uploaded\",\"digest\":null,\"uploader\":{\"login\":\"x\"},"
         "\"browser_download_url\":\"" RELEASE "SHA256SUMS\"},", (int)strlen(sums));
@@ -64,6 +65,20 @@ static int failures;
 #else
 #  define DOCS_FOR ""
 #endif
+
+/* the time zone the C library's local time uses (NULL: the system's own again) */
+static void set_zone(const char *tz) {
+#ifdef _WIN32
+    char env[64];
+    snprintf(env, sizeof env, "TZ=%s", tz ? tz : "");
+    _putenv(env);
+    _tzset();
+#else
+    if (tz) setenv("TZ", tz, 1);
+    else unsetenv("TZ");
+    tzset();
+#endif
+}
 
 static uint8_t *read_all(const char *path, size_t *len) {
     FILE *f = fopen(path, "rb");
@@ -383,7 +398,42 @@ int main(int argc, char **argv) {
         updater_poll(&u);
         CHECK(u.state == UPD_CURRENT && strstr(u.text, "newer than the latest release"), "a newer build: nothing to install");
         g_pretend[0] = '\0';
+
+        /* the release's day as the player's clock had it: published 2026-11-09 02:26 UTC is the 8th in Utah */
+        set_zone("MST7MDT");
+        fake_published = "2026-11-09T02:26:53Z";
+        fake_release(RELEASE VSSMB_PACKAGE, size, digest, NULL);
+        check();
+        updater_poll(&u);
+        CHECK(u.state == UPD_AVAILABLE && strstr(u.text, "(published 2026-11-08)"), u.text);
+        fake_published = "2026-11-05T10:00:00Z";
+        set_zone(NULL);
         free(fake_pkg);
+    }
+
+    /* GitHub's UTC time as a local day, in three time zones (POSIX TZ rules: offsets west of UTC are positive) */
+    {
+        char day[40];
+        set_zone("MST7MDT");
+        local_day("2026-11-09T02:26:53Z", day, sizeof day);
+        CHECK(!strcmp(day, "2026-11-08"), "02:26 UTC on the 9th is the 8th in Utah (MST)");
+        local_day("2026-07-01T05:59:59Z", day, sizeof day);
+        CHECK(!strcmp(day, "2026-06-30"), "05:59 UTC on 1 July is still 30 June in Utah (MDT)");
+        local_day("2026-07-01T06:00:00Z", day, sizeof day);
+        CHECK(!strcmp(day, "2026-07-01"), "06:00 UTC on 1 July is 1 July in Utah");
+        set_zone("UTC0");
+        local_day("2026-11-09T02:26:53Z", day, sizeof day);
+        CHECK(!strcmp(day, "2026-11-09"), "in UTC: the same day");
+        local_day("2028-02-29T23:59:59Z", day, sizeof day);
+        CHECK(!strcmp(day, "2028-02-29"), "a leap day");
+        set_zone("JST-9");
+        local_day("2026-12-31T20:00:00Z", day, sizeof day);
+        CHECK(!strcmp(day, "2027-01-01"), "20:00 UTC on 31 December is New Year's Day in Japan");
+        set_zone(NULL);
+        local_day("soon", day, sizeof day);
+        CHECK(!strcmp(day, "soon"), "a time that cannot be read is shown as it is");
+        local_day("2026-11-09", day, sizeof day);
+        CHECK(!strcmp(day, "2026-11-09"), "... and a day alone too");
     }
 
     printf("%s (%d failure%s)\n", failures ? "FAILED" : "all passed", failures, failures == 1 ? "" : "s");

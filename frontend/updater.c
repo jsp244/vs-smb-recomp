@@ -39,6 +39,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #ifdef _WIN32
 #  ifndef WIN32_LEAN_AND_MEAN
@@ -642,8 +643,31 @@ static int folder_writable(void) {
 #endif
 }
 
+/* the day GitHub's published_at ("2026-11-09T02:26:53Z", UTC) was where the player is: 2026-11-08 in
+   Utah. Its first 10 characters (the day in UTC) when it cannot be read. */
+static void local_day(const char *utc, char *out, size_t cap) {
+    int y, mo, d, h, mi, s;
+    struct tm tm;
+    snprintf(out, cap, "%.10s", utc);
+    if (sscanf(utc, "%4d-%2d-%2dT%2d:%2d:%2d", &y, &mo, &d, &h, &mi, &s) != 6 || y < 1970 || mo < 1 || mo > 12 ||
+        d < 1 || d > 31 || h > 23 || mi > 59 || s > 60)
+        return;
+    /* days since 1970-01-01 (the civil-calendar count, so that no time zone is involved) */
+    int yy = mo <= 2 ? y - 1 : y;
+    long long era = yy / 400, yoe = yy - era * 400, doy = (153 * (mo > 2 ? mo - 3 : mo + 9) + 2) / 5 + d - 1;
+    long long days = era * 146097 + yoe * 365 + yoe / 4 - yoe / 100 + doy - 719468;
+    time_t t = (time_t)(days * 86400 + h * 3600 + mi * 60 + s);
+#ifdef _WIN32
+    if (localtime_s(&tm, &t) != 0) return;
+#else
+    if (!localtime_r(&t, &tm)) return;
+#endif
+    strftime(out, cap, "%Y-%m-%d", &tm);
+}
+
 static void check(void) {
-    char url[320], tag[64] = "", page[256] = "", date[40] = "", asset[512] = "", sums[512] = "", digest[80] = "", name[128], state[24];
+    char url[320], tag[64] = "", page[256] = "", published[40] = "", date[40], asset[512] = "", sums[512] = "", digest[80] = "";
+    char name[128], state[24];
     char dir[1100];
     const char *pkg = package_name(), *mine = updater_version();
     long long size = -1;
@@ -671,8 +695,8 @@ static void check(void) {
     const char *b = rs.body, *e = rs.body + rs.len, *list = member(b, e, "assets");
     string_value(member(b, e, "tag_name"), e, tag, sizeof tag);
     string_value(member(b, e, "html_url"), e, page, sizeof page);
-    string_value(member(b, e, "published_at"), e, date, sizeof date);
-    date[10] = '\0';                                         /* 2026-11-03T20:15:00Z: the day */
+    string_value(member(b, e, "published_at"), e, published, sizeof published);
+    local_day(published, date, sizeof date);
     for (const char *p = list && *list == '[' ? ws(list + 1, e) : e; p < e && *p == '{';) {
         const char *sz = member(p, e, "size");
         string_value(member(p, e, "name"), e, name, sizeof name);
