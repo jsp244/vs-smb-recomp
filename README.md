@@ -214,8 +214,10 @@ Verified (headless harness with scripted input and RAM pokes, screenshots inspec
   (lava, fire bars, lifts), the treetop and mushroom levels, Lakitu, Bullet Bill and
   Hammer Bro stages; the title with its banner and the demo scrolling it away, the
   PUSH BUTTON, intermission, game-over and continue screens, the attract's high scores
-  and the name entry for a top score (poked), every frame of the attract and of the
-  coin-op session drawn (the screen's off frames black); 16:9 with the objects
+  and the name entry for a top score (poked; and after the game's end, the cursor over
+  every letter, RUB and END, then the coin screen at one to four credits, the arcade's
+  pixels on them checked pixel by pixel every frame in 4:3 and 16:9), every frame of the
+  attract and of the coin-op session drawn (the screen's off frames black); 16:9 with the objects
   beside the picture, the walk into the left band (Mario small, big and fiery whole as he
   crosses the picture's edge, in 16:9 and in the Deck's 16:10 Integer view, as are the
   objects crossing either edge) and, under water, the tint and the

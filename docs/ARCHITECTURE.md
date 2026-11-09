@@ -546,7 +546,9 @@ heads, the name entry's cursor) are the arcade's pixels and colours, lit from th
 left, shaded at the bottom right and outlined in a dark shade of their colour, as
 All-Stars draws its sprites, put on layer 1 in whole cells: cells that come out the
 same share a tile (the brick frames are a few hundred cells of a few tiles), and the
-tiles share BG palettes 2-7 as their colours fit. Mario there is All-Stars' frame for
+tiles share BG palettes 2-7 as their colours fit, filled anew for each picture (the
+screen before's colours left in them drew the 2-player button half orange after the
+game's end, and the cursor broken). Mario there is All-Stars' frame for
 the pose VS. draws. VS. writes its PUSH BUTTON screen over the title's level without
 moving the scroll, so that screen is told by its OperMode (1, from task 3: on the frame
 before, the title still shows, banner and all). While the screen is off the picture is

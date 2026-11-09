@@ -3381,6 +3381,7 @@ static void build_icons(int nt, const uint8_t icon_spr[64]) {
     if (key == icons.key) return;
     icons.key = key;
     icons.ncell = icons.nuniq = icons.npals = 0;
+    memset(icons.npal, 0, sizeof icons.npal);   /* each palette from empty (they held the last screen's colours) */
     memset(val, 0, sizeof val);
     memset(mark, 0, sizeof mark);
     for (int row = 0; row < 30; row++)
