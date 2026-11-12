@@ -25,7 +25,7 @@ runtime/apu.c        pulse x2, triangle, noise, DMC, frame counter, mixer, outpu
 runtime/mapper.c     Vs. System (99); NROM, MMC1, MMC3/MMC6 for the test ROMs
 runtime/mem.c        CPU bus: PPU/APU registers, controllers, Vs. coin/DIP inputs, OAM DMA, work RAM
 runtime/cart.c       iNES / NES 2.0 loader, hashes, Vs. System detection
-runtime/romzip.c     MAME's suprmrio.zip as an iNES image (zip directory, inflate, CRC checks)
+runtime/romzip.c     MAME's sets as an iNES image, the dump in a zip (zip directory, inflate, CRC checks)
 runtime/palette.c    NTSC composite palette, the 2C03 and RP2C04 RGB palettes
 runtime/widescreen.c the level beside the picture, from the nametables, with its objects (CPU sandbox)
 runtime/bandwalk.c   the player walking into the left band (patches to the game's wall, scroll, sprites, collisions)
@@ -57,7 +57,14 @@ VS. Super Mario Bros. runs on Nintendo's Vs. UniSystem: the NES's 2A03 CPU and a
 CHR chips 2B 2A) is 32 KiB of PRG and 16 KiB of CHR on mapper 99. Common old
 iNES dumps are labelled mapper 3 with no Vs. flag, so `cart.c` recognises the dump
 by its SHA-1 and sets up the board regardless; NES 2.0 headers (console type 1,
-byte 13 = PPU type) and mapper 99 are honoured as well.
+byte 13 = PPU type) and mapper 99 are honoured as well. MAME's `suprmrioa` (the
+GoodNES "[a1]" dump; MAME thinks it an operator's change to make the game harder)
+differs from it in its 1C chip, in two bytes: the operands of RunGameTimer's
+`LDA #$11` / `LDA #$14` (`$B633`, `$B63A`, the frames per tick at the fast and the
+normal setting) are `#$0D` / `#$11` there. `cart.c` knows both; `romzip.c` builds
+either set from MAME's zips (non-merged, merged, or a split clone zip with its
+parent's beside it, the zip's name choosing in a merged one), or takes the `.nes`
+file a zip holds.
 
 | address | the board |
 |---|---|
@@ -74,8 +81,8 @@ What the game does with them (from its code):
   `$931C`: 1c/1c, 2c/1c, 3c/1c, 1c/2c, 1c/3c, 1c/4c, 1c/5c, and 7 = free play, which
   forces 32 credits and shows FREE PLAY), sw4 = two lives instead of three, 2 * sw5 + sw6
   = 100 / 150 / 200 / 250 coins for an extra life (`$BAF2`), sw7 = the fast timer
-  (`$0787` reload 17 instead of 20, other start values), sw8 = three lives after a continue
-  instead of four.
+  (`$0787` reload 17 instead of 20, other start values; 13 instead of 17 in
+  `suprmrioa`), sw8 = three lives after a continue instead of four.
 * A coin (`$9389`) counts when its switch opens again within 15 frames of closing;
   held longer it is marked jammed and refused. The frontend therefore turns one press of
   Insert coin into a closure of exactly four frames.
@@ -161,6 +168,12 @@ comparable.
 * `recomp_run()` looks up `cpu.pc` in the unit's entry table and calls the
   routine; a miss (code from RAM, an untranslated address, a jammed CPU) returns
   0 and the frame loop executes one interpreted instruction instead.
+* Immediate operands are C constants, except those of instructions marked `rom`
+  in `symbols.txt` (only in the flat layout): `ROM_OPERAND(addr)` reads them from
+  the loaded dump. They are where the known dumps differ (the timer's tick at
+  `$B633` / `$B63A`), so `recomp_main.c` also carries their addresses and the
+  dump's SHA-1 with those bytes zeroed, and `recomp_fits_cart()` runs the native
+  code on any dump that matches apart from them (the interpreter otherwise).
 
 ### Cosimulation
 

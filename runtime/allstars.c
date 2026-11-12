@@ -50,6 +50,7 @@
 #include "spc700.h"
 #include "nes.h"
 #include "palette.h"
+#include "romzip.h"
 #include <limits.h>
 #include <stddef.h>
 #include <stdio.h>
@@ -1670,16 +1671,44 @@ void allstars_attach(void) {
 static void music_free(void);
 static void music_build(void);
 
+/* romzip_pick's judge for an All-Stars ROM in a zip: a version this program knows at once, else the first
+   file of a ROM's size (the error then says what it is) */
+static int judge_snes_rom(const char *name, const uint8_t *d, size_t n, void *ctx) {
+    (void)name; (void)ctx;
+    size_t skip = (n % 0x8000) == 512 ? 512 : 0;
+    uint8_t sha[20];
+    char hex[41];
+    rom_sha1(d + skip, n - skip, sha);
+    for (int i = 0; i < 20; i++) sprintf(hex + i * 2, "%02x", sha[i]);
+    for (int k = 0; known[k].sha1; k++) if (!strcmp(known[k].sha1, hex)) return 2;
+    return 1;
+}
+
 int allstars_load(const char *path, char *err, size_t errlen) {
     FILE *f = nes_fopen(path, "rb");
     if (!f) { snprintf(err, errlen, "cannot open the file"); return -1; }
     fseek(f, 0, SEEK_END);
     long len = ftell(f);
     fseek(f, 0, SEEK_SET);
-    if (len < 0x100000 || len > 0x400000 + 512) { fclose(f); snprintf(err, errlen, "not a Super Mario All-Stars ROM (size)"); return -1; }
+    if (len < 22 || len > 0x400000 + 512) { fclose(f); snprintf(err, errlen, "not a Super Mario All-Stars ROM (size)"); return -1; }
     uint8_t *data = malloc((size_t)len);
     if (!data || fread(data, 1, (size_t)len, f) != (size_t)len) { fclose(f); free(data); snprintf(err, errlen, "cannot read the file"); return -1; }
     fclose(f);
+    if (romzip_is_zip(data, (size_t)len)) {
+        /* a zip: the All-Stars ROM in it */
+        uint8_t *rom;
+        size_t n;
+        int rc = romzip_pick(data, (size_t)len, 0x100000, 0x400000 + 512, judge_snes_rom, NULL, &rom, &n);
+        free(data);
+        if (rc != ROMZIP_OK) {
+            snprintf(err, errlen, rc == ROMZIP_UNREADABLE ? "the zip's ROM is packed in a way this program cannot unpack (only stored or deflated files)"
+                                                          : "no Super Mario All-Stars ROM in the zip");
+            return -1;
+        }
+        data = rom;
+        len = (long)n;
+    }
+    if (len < 0x100000) { free(data); snprintf(err, errlen, "not a Super Mario All-Stars ROM (size)"); return -1; }
     size_t skip = (len % 0x8000) == 512 ? 512 : 0;   /* a copier header */
     size_t size = (size_t)len - skip;
     uint8_t sha[20], md[16];

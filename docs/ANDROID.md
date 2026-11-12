@@ -13,7 +13,7 @@ There are two APKs. Pick the one for your device:
 
 Both run on Android 7 or newer (arm64; they also carry an x86_64 build for emulators and
 Chromebooks). They contain no game data: you need your own dump of the VS. Super Mario
-Bros. board (a .nes file, or MAME's suprmrio.zip).
+Bros. board (a .nes file, a .zip with one, or MAME's suprmrio.zip).
 
 Install
 -------
@@ -37,17 +37,17 @@ Nothing is downloaded or installed until you press Update now and confirm.
 
 First start
 -----------
-The menu opens on the ROM tab. Choose "Choose ROM file..." and pick your .nes file or
-suprmrio.zip in the system file picker. The app copies it into its own storage, checks its
-hash and remembers it, so this happens once.
+The menu opens on the ROM tab. Choose "Choose ROM file..." and pick your .nes file (or a
+.zip with it, or suprmrio.zip) in the system file picker. The app copies it into its own
+storage, checks its hash and remembers it, so this happens once.
 Alternatively put the file in Android/data/org.vssmb.nativeport/files/ on the shared
 storage (org.vssmb.nativeport.touch for the phone app); the app finds it there by itself.
 
 Remastered graphics: with your own Super Mario All-Stars ROM (SNES, USA), choose "Choose
-All-Stars ROM..." on the ROM tab and pick the .sfc file (or put it in the same folder as the
-dump); then Graphics > Graphics switches between Arcade and All-Stars. Run-ahead is off
-while the All-Stars graphics are on (drawing them for the frames ahead takes too long; the
-menu shows it locked), and Arcade brings your run-ahead setting back.
+All-Stars ROM..." on the ROM tab and pick the .sfc file or a .zip with it (or put it in the
+same folder as the dump); then Graphics > Graphics switches between Arcade and All-Stars.
+Run-ahead is off while the All-Stars graphics are on (drawing them for the frames ahead
+takes too long; the menu shows it locked), and Arcade brings your run-ahead setting back.
 
 The picture fills the screen in the shape that matches it: 16:9 widescreen on a 1920x1080
 screen like the AYANEO Pocket EVO's, 4:3 on the Retroid Pocket Nova's 1280x960. During play
@@ -70,7 +70,11 @@ bottom right (a thumb between them presses both, and it can slide from one to th
 COIN and START at the bottom, MENU at the top for this port's menu (the Back gesture opens
 it too). In the menu, tap a tab or a row; tap the arrows of a row to change it. A
 controller can be used as well: the on-screen controls step aside while you play with it
-and come back when you touch the screen.
+and come back when you touch the screen. To keep them away for good (with a Bluetooth
+controller or a phone grip such as a Backbone), tap the small faint controller button at
+the top right: the controls switch off and the button shows crossed out; tap it again to
+bring them back. The choice is remembered. Playing with a controller hides that button
+too; the next touch shows it again without pressing it.
 
 Controls on a handheld
 ----------------------

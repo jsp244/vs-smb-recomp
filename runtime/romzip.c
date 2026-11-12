@@ -1,18 +1,28 @@
 /*
- * romzip.c - VS. Super Mario Bros. from MAME's "suprmrio" set: a zip of the
- * six 8 KiB chips, put together into the same PRG + CHR image as an iNES dump
- * (with a NES 2.0 header for the Vs. System, mapper 99, RP2C04-0004).
+ * romzip.c - the game's ROMs from zip archives.
  *
- * Only what such a set needs: the zip directory, stored and deflated
- * entries (a small RFC 1951 decoder), CRC checks. The chips are found by
- * their CRC32, so renamed files and merged sets work too.
+ * VS. Super Mario Bros. from MAME's sets, "suprmrio" and "suprmrioa": zips of the
+ * six 8 KiB chips, put together into the same PRG + CHR image as an iNES dump
+ * (with a NES 2.0 header for the Vs. System, mapper 99, RP2C04-0004). The chips
+ * are found by their CRC32, so renamed files and merged sets work too, and a
+ * split set's clone zip with its parent's.
+ *
+ * Or the one dump a zip holds: a .nes file, a Super Mario All-Stars ROM. The
+ * caller judges the entries (romzip_pick).
+ *
+ * Only what such archives need: the zip directory, stored and deflated
+ * entries (a small RFC 1951 decoder), CRC checks.
  */
 #include "romzip.h"
 #include <stdlib.h>
 #include <string.h>
 
-/* the chips in image order: PRG $8000, $A000, $C000, $E000, then CHR $0000, $1000 */
-static const uint32_t chip_crc[6] = { 0xbe4d5436u, 0x5e3fb550u, 0xb1b87893u, 0x1abf053cu, 0x42418d40u, 0x15506b86u };
+/* the chips in image order: PRG $8000, $A000, $C000, $E000, then CHR $0000, $1000. suprmrioa has its own
+   $A000 chip (two bytes differ: how many frames each tick of the game timer lasts) and shares the rest. */
+static const uint32_t chip_crc[2][6] = {
+    { 0xbe4d5436u, 0x5e3fb550u, 0xb1b87893u, 0x1abf053cu, 0x42418d40u, 0x15506b86u },   /* suprmrio */
+    { 0xbe4d5436u, 0x0011fc5au, 0xb1b87893u, 0x1abf053cu, 0x42418d40u, 0x15506b86u },   /* suprmrioa */
+};
 #define CHIP 8192
 
 static uint32_t crc32_of(const uint8_t *d, size_t n) {
@@ -172,44 +182,126 @@ int romzip_is_zip(const uint8_t *data, size_t len) {
     return len >= 4 && data[0] == 'P' && data[1] == 'K' && data[2] == 3 && data[3] == 4;
 }
 
-int romzip_vs_set(const uint8_t *zip, size_t len, uint8_t **image, size_t *image_len) {
-    /* end of central directory: the last "PK\5\6" within the final 64 KiB + 22 bytes */
-    size_t eocd = 0;
-    int found = 0;
-    for (size_t i = len >= 22 ? len - 22 : 0; ; i--) {
-        if (i + 22 <= len && rd32(zip + i) == 0x06054b50u) { eocd = i; found = 1; break; }
-        if (i == 0 || len - i > 65535 + 22) break;
+typedef struct {
+    uint32_t flags, method, crc;
+    size_t csize, usize, local, name_len;
+    const uint8_t *name;
+} zentry_t;
+
+/* the end of the central directory: the last "PK\5\6" within the final 64 KiB + 22 bytes */
+static int find_eocd(const uint8_t *zip, size_t len, size_t *eocd) {
+    if (len < 22) return 0;
+    for (size_t i = len - 22; ; i--) {
+        if (rd32(zip + i) == 0x06054b50u) { *eocd = i; return 1; }
+        if (i == 0 || len - i > 65535 + 22) return 0;
     }
-    if (!found) return ROMZIP_NOT_ZIP;
-    size_t entries = rd16(zip + eocd + 10), cd = rd32(zip + eocd + 16);
-    uint8_t *img = calloc(1, 16 + 6 * CHIP);
-    if (!img) return ROMZIP_MISSING;
-    int have = 0;
-    size_t p = cd;
-    for (size_t e = 0; e < entries; e++) {
-        if (p + 46 > len || rd32(zip + p) != 0x02014b50u) break;
-        uint32_t method = rd16(zip + p + 10), crc = rd32(zip + p + 16);
-        size_t csize = rd32(zip + p + 20), usize = rd32(zip + p + 24);
+}
+
+/* the central directory's entry i; 0 when there is none */
+static int zip_entry(const uint8_t *zip, size_t len, int want, zentry_t *e) {
+    size_t eocd;
+    if (want < 0 || !find_eocd(zip, len, &eocd)) return 0;
+    size_t entries = rd16(zip + eocd + 10), p = rd32(zip + eocd + 16);
+    for (size_t i = 0; i < entries; i++) {
+        if (p > len || len - p < 46 || rd32(zip + p) != 0x02014b50u) return 0;
         size_t nlen = rd16(zip + p + 28), xlen = rd16(zip + p + 30), clen = rd16(zip + p + 32);
-        size_t local = rd32(zip + p + 42);
+        if (len - p - 46 < nlen) return 0;
+        if (i == (size_t)want) {
+            e->flags = rd16(zip + p + 8);
+            e->method = rd16(zip + p + 10);
+            e->crc = rd32(zip + p + 16);
+            e->csize = rd32(zip + p + 20);
+            e->usize = rd32(zip + p + 24);
+            e->local = rd32(zip + p + 42);
+            e->name = zip + p + 46;
+            e->name_len = nlen;
+            return 1;
+        }
         p += 46 + nlen + xlen + clen;
-        int chip = -1;
-        for (int c = 0; c < 6; c++) if (chip_crc[c] == crc && usize == CHIP) chip = c;
-        if (chip < 0 || (have & (1 << chip))) continue;
-        if (local + 30 > len || rd32(zip + local) != 0x04034b50u) continue;
-        size_t data = local + 30 + rd16(zip + local + 26) + rd16(zip + local + 28);
-        if (data + csize > len) continue;
-        uint8_t *dst = img + 16 + (size_t)chip * CHIP;
-        int ok = 0;
-        if (method == 0 && csize == CHIP) { memcpy(dst, zip + data, CHIP); ok = 1; }
-        else if (method == 8) ok = inflate_raw(zip + data, csize, dst, CHIP);
-        if (ok && crc32_of(dst, CHIP) == crc) have |= 1 << chip;
     }
-    if (have != 0x3F) { free(img); return ROMZIP_MISSING; }
-    /* NES 2.0 header: 2 x 16 KiB PRG, 2 x 8 KiB CHR, mapper 99, vertical, Vs. System with RP2C04-0004 */
-    static const uint8_t hdr[16] = { 'N', 'E', 'S', 0x1A, 2, 2, 0x31, 0x69, 0, 0, 0, 0, 0, 0x05, 0, 0 };
-    memcpy(img, hdr, 16);
-    *image = img;
-    *image_len = 16 + 6 * CHIP;
-    return ROMZIP_OK;
+    return 0;
+}
+
+/* entry e's data into out (e->usize bytes), checked against its CRC: stored or deflated, not encrypted */
+static int zip_read(const uint8_t *zip, size_t len, const zentry_t *e, uint8_t *out) {
+    if (e->flags & 1) return 0;
+    if (e->local > len || len - e->local < 30 || rd32(zip + e->local) != 0x04034b50u) return 0;
+    size_t data = e->local + 30 + rd16(zip + e->local + 26) + rd16(zip + e->local + 28);
+    if (data > len || len - data < e->csize) return 0;
+    int ok = 0;
+    if (e->method == 0 && e->csize == e->usize) { memcpy(out, zip + data, e->usize); ok = 1; }
+    else if (e->method == 8) ok = inflate_raw(zip + data, e->csize, out, e->usize);
+    return ok && crc32_of(out, e->usize) == e->crc;
+}
+
+int romzip_entry(const uint8_t *zip, size_t len, int i, char *name, size_t name_size, size_t *size) {
+    zentry_t e;
+    if (!zip_entry(zip, len, i, &e)) return 0;
+    if (name && name_size) {
+        size_t n = e.name_len < name_size - 1 ? e.name_len : name_size - 1;
+        memcpy(name, e.name, n);
+        name[n] = 0;
+    }
+    if (size) *size = e.usize;
+    return 1;
+}
+
+int romzip_pick(const uint8_t *zip, size_t len, size_t min, size_t max,
+                int (*judge)(const char *name, const uint8_t *data, size_t size, void *ctx), void *ctx,
+                uint8_t **out, size_t *out_len) {
+    size_t eocd;
+    if (!find_eocd(zip, len, &eocd)) return ROMZIP_NOT_ZIP;
+    uint8_t *best = NULL;
+    size_t best_len = 0;
+    int unreadable = 0;
+    zentry_t e;
+    for (int i = 0; zip_entry(zip, len, i, &e); i++) {
+        if (e.usize < min || e.usize > max || e.usize == 0) continue;
+        char name[260];
+        size_t n = e.name_len < sizeof name - 1 ? e.name_len : sizeof name - 1;
+        memcpy(name, e.name, n);
+        name[n] = 0;
+        uint8_t *data = malloc(e.usize);
+        if (!data) continue;
+        if (!zip_read(zip, len, &e, data)) { free(data); unreadable = 1; continue; }
+        int verdict = judge(name, data, e.usize, ctx);
+        if (verdict == 2) { free(best); *out = data; *out_len = e.usize; return ROMZIP_OK; }
+        if (verdict == 1 && !best) { best = data; best_len = e.usize; continue; }
+        free(data);
+    }
+    if (best) { *out = best; *out_len = best_len; return ROMZIP_OK; }
+    return unreadable ? ROMZIP_UNREADABLE : ROMZIP_MISSING;
+}
+
+int romzip_vs_set(const uint8_t *const zips[], const size_t lens[], int nzips, int set,
+                  uint8_t **image, size_t *image_len, int *set_out) {
+    size_t eocd;
+    if (nzips < 1 || !find_eocd(zips[0], lens[0], &eocd)) return ROMZIP_NOT_ZIP;
+    for (int k = 0; k < 2; k++) {
+        int s = k == 0 ? set : 1 - set;
+        if (s != ROMZIP_SET_SUPRMRIO && s != ROMZIP_SET_SUPRMRIOA) continue;
+        uint8_t *img = calloc(1, 16 + 6 * CHIP);
+        if (!img) return ROMZIP_MISSING;
+        int have = 0, first = 0;
+        for (int z = 0; z < nzips && have != 0x3F; z++) {
+            zentry_t e;
+            for (int i = 0; have != 0x3F && zip_entry(zips[z], lens[z], i, &e); i++) {
+                if (e.usize != CHIP) continue;
+                for (int c = 0; c < 6; c++)
+                    if (!(have & (1 << c)) && chip_crc[s][c] == e.crc && zip_read(zips[z], lens[z], &e, img + 16 + (size_t)c * CHIP))
+                        have |= 1 << c;
+            }
+            if (z == 0) first = have;
+        }
+        /* the first zip is the set chosen: it holds some of the chips at least (a parent's zip alone is not it) */
+        if (have != 0x3F || !first) { free(img); continue; }
+        /* NES 2.0 header: 2 x 16 KiB PRG, 2 x 8 KiB CHR, mapper 99, vertical, Vs. System with RP2C04-0004 */
+        static const uint8_t hdr[16] = { 'N', 'E', 'S', 0x1A, 2, 2, 0x31, 0x69, 0, 0, 0, 0, 0, 0x05, 0, 0 };
+        memcpy(img, hdr, 16);
+        *image = img;
+        *image_len = 16 + 6 * CHIP;
+        if (set_out) *set_out = s;
+        return ROMZIP_OK;
+    }
+    return ROMZIP_MISSING;
 }

@@ -31,11 +31,11 @@ int file_dialog_open_kind(SDL_Window *parent, int kind, char *out, size_t out_le
     ofn.lStructSize = sizeof ofn;
     ofn.hwndOwner = owner;
     if (kind == FILE_KIND_ALLSTARS) {
-        ofn.lpstrFilter = L"Super Mario All-Stars ROM (*.sfc, *.smc)\0*.sfc;*.smc\0All files (*.*)\0*.*\0";
+        ofn.lpstrFilter = L"Super Mario All-Stars ROM (*.sfc, *.smc, *.zip)\0*.sfc;*.smc;*.zip\0All files (*.*)\0*.*\0";
         ofn.lpstrTitle = L"Select your own Super Mario All-Stars ROM (SNES, USA)";
     } else {
-        ofn.lpstrFilter = L"VS. Super Mario Bros. dump (*.nes, MAME *.zip)\0*.nes;*.zip\0All files (*.*)\0*.*\0";
-        ofn.lpstrTitle = L"Select your own VS. Super Mario Bros. dump (.nes or MAME suprmrio.zip)";
+        ofn.lpstrFilter = L"VS. Super Mario Bros. dump (*.nes, *.zip)\0*.nes;*.zip\0All files (*.*)\0*.*\0";
+        ofn.lpstrTitle = L"Select your own VS. Super Mario Bros. dump (.nes, a .zip with one, or MAME suprmrio.zip)";
     }
     ofn.lpstrFile = buf;
     ofn.nMaxFile = (DWORD)(sizeof buf / sizeof buf[0]);
@@ -55,7 +55,7 @@ int file_dialog_open(SDL_Window *parent, char *out, size_t out_len) { return fil
 
 /* The activity shows the document picker, copies the chosen file into the app's storage and
    hands its path over as a drop event, which the main loop already treats as "load this ROM"
-   (the board's dump or, by its size, the All-Stars ROM). Nothing is chosen yet when this returns. */
+   (the board's dump or, by its size or a zip's, the All-Stars ROM). Nothing is chosen yet when this returns. */
 int file_dialog_open_kind(SDL_Window *parent, int kind, char *out, size_t out_len) {
     (void)parent; (void)kind; (void)out; (void)out_len;
     JNIEnv *env = (JNIEnv *)SDL_AndroidGetJNIEnv();
@@ -112,9 +112,9 @@ int file_dialog_open_kind(SDL_Window *parent, int kind, char *out, size_t out_le
     if (kind == FILE_KIND_ALLSTARS) {
         if (have_cmd("zenity"))
             return run_capture("zenity --file-selection --title='Select your Super Mario All-Stars ROM' "
-                               "--file-filter='Super Mario All-Stars ROM (*.sfc, *.smc) | *.sfc *.smc' --file-filter='All files | *' 2>/dev/null", out, out_len);
+                               "--file-filter='Super Mario All-Stars ROM (*.sfc, *.smc, *.zip) | *.sfc *.smc *.zip' --file-filter='All files | *' 2>/dev/null", out, out_len);
         if (have_cmd("kdialog"))
-            return run_capture("kdialog --getopenfilename . 'Super Mario All-Stars ROM (*.sfc *.smc)' 2>/dev/null", out, out_len);
+            return run_capture("kdialog --getopenfilename . 'Super Mario All-Stars ROM (*.sfc *.smc *.zip)' 2>/dev/null", out, out_len);
         return 0;
     }
     if (have_cmd("zenity"))

@@ -25,6 +25,9 @@
 /* one marked "patch": the runtime may change the machine before it runs (see sys.patch); the generated
    code keeps no register copies of its own, so what the patch writes is what the instruction sees */
 #define PATCH(addr) do { if (sys.patch) sys.patch(addr); } while (0)
+/* the immediate operand of one marked "rom", read from the loaded ROM: it differs between the known dumps
+   (the game timer's tick in MAME's two sets), so the same native code runs each (recomp_fits_cart) */
+#define ROM_OPERAND(addr) mem_read(addr)
 
 #ifdef RECOMP_TRACE
 #define INSN(addr) do { cpu.pc = (addr); sys.instructions++; if (sys.trace_hook) sys.trace_hook(); } while (0)

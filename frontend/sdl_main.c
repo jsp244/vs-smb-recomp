@@ -41,6 +41,7 @@
 #include "gpu_sync.h"
 #include "widescreen.h"
 #include "allstars.h"
+#include "romzip.h"
 #include "rewind.h"
 #include "touchpad.h"
 #include "updater.h"
@@ -102,6 +103,7 @@ typedef struct {
     int continue_lives;  /* switch 8: lives after a continue, 0 four, 1 three */
     int allstars;        /* graphics: 0 the arcade's, 1 Super Mario All-Stars' (needs that ROM: allstars_rom) */
     int music;           /* 0 the one that goes with the graphics, 1 the arcade's, 2 Super Mario All-Stars' (that ROM too) */
+    int touch_controls;  /* the phone edition's on-screen controls: 1 shown, 0 only the small button that brings them back */
     char rom[2048];
     char allstars_rom[2048];
 } config_t;
@@ -112,7 +114,8 @@ static config_t cfg = {
     .window_size = 3, .display_mode = 0, .resolution = 0, .res_w = 0, .res_h = 0, .scaling = 1, .aspect = 1, .colors = 0, .filter = 2,
     .shader = 0, .shader_strength = 1, .overscan = 1, .no_sprite_limit = 0, .walk_to_edge = 1, .volume = 100,
     .lowlat = 1, .runahead = GAME_LAG, .audio_latency = 1, .rewind = 1, .state_slot = 1,
-    .coinage = 0, .lives = 0, .bonus = 0, .fast_timer = 0, .continue_lives = 0, .allstars = 1, .music = 0, .rom = "", .allstars_rom = ""
+    .coinage = 0, .lives = 0, .bonus = 0, .fast_timer = 0, .continue_lives = 0, .allstars = 1, .music = 0, .touch_controls = 1,
+    .rom = "", .allstars_rom = ""
 };
 
 static const char *const display_modes[] = { "Windowed", "Fullscreen", "Fullscreen (exclusive)" };
@@ -371,11 +374,11 @@ static int on_steam_deck(void) {
 #endif
 }
 
-/* names of the files in dir with one of the two extensions (3 letters, any case), up to max */
-static int list_files_ext(const char *dir, const char *const exts[2], char names[][512], int max) {
+/* names of the files in dir with one of the extensions (3 letters, any case; the list ends with NULL), up to max */
+static int list_files_ext(const char *dir, const char *const exts[], char names[][512], int max) {
     int n = 0;
 #ifdef _WIN32
-    for (int x = 0; x < 2 && n < max; x++) {
+    for (int x = 0; exts[x] && n < max; x++) {
         wchar_t pattern[1300];
         char pat8[1300];
         snprintf(pat8, sizeof pat8, "%s\\*.%s", dir, exts[x]);
@@ -395,9 +398,9 @@ static int list_files_ext(const char *dir, const char *const exts[2], char names
     struct dirent *e;
     while (n < max && (e = readdir(d)) != NULL) {
         size_t len = strlen(e->d_name);
-        if (len > 4 && len < 512 && e->d_name[len - 4] == '.' &&
-            (SDL_strcasecmp(e->d_name + len - 3, exts[0]) == 0 || SDL_strcasecmp(e->d_name + len - 3, exts[1]) == 0))
-            snprintf(names[n++], 512, "%s", e->d_name);
+        if (len <= 4 || len >= 512 || e->d_name[len - 4] != '.') continue;
+        for (int x = 0; exts[x]; x++)
+            if (SDL_strcasecmp(e->d_name + len - 3, exts[x]) == 0) { snprintf(names[n++], 512, "%s", e->d_name); break; }
     }
     closedir(d);
 #endif
@@ -406,7 +409,7 @@ static int list_files_ext(const char *dir, const char *const exts[2], char names
 
 /* names of the .nes and .zip files in dir (any case), up to max */
 static int list_rom_files(const char *dir, char names[][512], int max) {
-    static const char *const exts[2] = { "nes", "zip" };
+    static const char *const exts[] = { "nes", "zip", NULL };
     return list_files_ext(dir, exts, names, max);
 }
 
@@ -438,7 +441,9 @@ static void write_config(void) {
     fprintf(f, "overscan=%d            ; crop 8 lines at the top and bottom\n", cfg.overscan);
     fprintf(f, "no_sprite_limit=%d     ; 1: draw every sprite on a line instead of 8 (no flicker)\n", cfg.no_sprite_limit);
     fprintf(f, "walk_to_edge=%d        ; 1: in a widescreen view the player may walk left into the band beside the picture\n", cfg.walk_to_edge);
-    fprintf(f, "low_latency=%d        ; 1: frame delay, locked to the display (Windows, Android) or timer pacing without vsync (Linux); 0: plain timer (Linux: vsync)\n", cfg.lowlat);
+    if (touchpad_enabled())
+        fprintf(f, "touch_controls=%d      ; 1: the on-screen controls show; 0: only the small button at the top right that brings them back\n", cfg.touch_controls);
+    fprintf(f, "low_latency=%d       ; 1: frame delay, locked to the display (Windows, Android) or timer pacing without vsync (Linux); 0: plain timer (Linux: vsync)\n", cfg.lowlat);
     fprintf(f, "runahead=%d            ; frames of run-ahead (0-3; none while allstars=1 draws the All-Stars graphics); the game shows a press %d frame%s after it\n",
             cfg.runahead, GAME_LAG, GAME_LAG == 1 ? "" : "s");
     fprintf(f, "audio_latency=%d       ; 0 low (~25 ms), 1 normal (~45 ms), 2 safe (~90 ms)\n", cfg.audio_latency);
@@ -507,6 +512,7 @@ static void load_config(void) {
         else if (!strcmp(key, "overscan")) cfg.overscan = atoi(val) ? 1 : 0;
         else if (!strcmp(key, "no_sprite_limit")) cfg.no_sprite_limit = atoi(val) ? 1 : 0;
         else if (!strcmp(key, "walk_to_edge")) cfg.walk_to_edge = atoi(val) ? 1 : 0;
+        else if (!strcmp(key, "touch_controls")) cfg.touch_controls = atoi(val) ? 1 : 0;
         else if (!strcmp(key, "rewind_enabled")) cfg.rewind = atoi(val) ? 1 : 0;
         else if (!strcmp(key, "state_slot")) { int v = atoi(val); if (v >= 1 && v <= 9) cfg.state_slot = v; }
         else if (!strcmp(key, "coinage")) { int v = atoi(val); if (v >= 0 && v <= 7) cfg.coinage = v; }
@@ -1453,12 +1459,12 @@ static int load_rom_file(const char *path) {
     if (!path || !*path) { snprintf(rom_status, sizeof rom_status, "No ROM selected"); refresh_rom_items(); return 0; }
     if (!file_exists(path)) { snprintf(rom_status, sizeof rom_status, "File not found"); refresh_rom_items(); return 0; }
     if (nes_load(path) != 0) {
-        snprintf(rom_status, sizeof rom_status, "Not a .nes file or MAME's suprmrio set");
+        snprintf(rom_status, sizeof rom_status, "Not a .nes file, a zip with one, or MAME's suprmrio set");
         refresh_rom_items();
         return 0;
     }
     const char *known = cart_known_name();
-    int native = recomp_rom_sha1 && strcmp(recomp_rom_sha1, cart.sha1_hex) == 0;
+    int native = recomp_fits_cart();
     snprintf(rom_hashes, sizeof rom_hashes, "SHA-1 %s  MD5 %s  CRC32 %08X", cart.sha1_hex, cart.md5_hex, cart.crc32);
     if (!known && !native) {
         snprintf(rom_status, sizeof rom_status, "Hash check FAILED: not a known VS. Super Mario Bros. dump (%s)", rom_hashes);
@@ -1763,6 +1769,7 @@ static void build_menu(void) {
     if (touchpad_enabled())
         snprintf(ctl_items[K_TOTAL + 2].info, sizeof ctl_items[K_TOTAL + 2].info, "%s",
                  "On the screen: d-pad, B, A, COIN (insert coin), START (1 player), and MENU for this menu (Back works too). "
+                 "The small button at the top right switches them off and on. "
                  "A controller can be used as well: the screen's controls step aside until you touch it again.");
     else if (handheld)
         snprintf(ctl_items[K_TOTAL + 2].info, sizeof ctl_items[K_TOTAL + 2].info, "%s",
@@ -1855,10 +1862,10 @@ static int load_allstars_file(const char *path) {
     return 1;
 }
 
-/* none chosen (or the remembered one gone): an All-Stars ROM (.sfc or .smc) where the dump is looked for;
-   files that are not one are passed over quietly */
+/* none chosen (or the remembered one gone): an All-Stars ROM (.sfc or .smc, or a zip with one) where the dump
+   is looked for; files that are not one are passed over quietly */
 static int find_allstars_nearby(void) {
-    static const char *const exts[2] = { "sfc", "smc" };
+    static const char *const exts[] = { "sfc", "smc", "zip", NULL };
     char dirs[5][1200];
     int nd = nearby_dirs(dirs);
     static char names[32][512];
@@ -1877,14 +1884,25 @@ static int find_allstars_nearby(void) {
 }
 
 /* a file handed over by drag and drop or the Android document picker: All-Stars (an SNES ROM, a megabyte and
-   more) or the board's dump */
+   more, or a zip holding one) or the board's dump (a .nes file, a zip with one, MAME's set) */
 static int looks_like_snes_rom(const char *path) {
     FILE *f = nes_fopen(path, "rb");
     if (!f) return 0;
     fseek(f, 0, SEEK_END);
     long n = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    uint8_t *d = (n >= 22 && n <= (16L << 20)) ? malloc((size_t)n) : NULL;
+    if (d && fread(d, 1, (size_t)n, f) != (size_t)n) { free(d); d = NULL; }
     fclose(f);
-    return n >= 0x100000;
+    int snes = n >= 0x100000;
+    if (d && romzip_is_zip(d, (size_t)n)) {
+        size_t size;
+        snes = 0;
+        for (int i = 0; romzip_entry(d, (size_t)n, i, NULL, 0, &size); i++)
+            if (size >= 0x100000) { snes = 1; break; }
+    }
+    free(d);
+    return snes;
 }
 
 static void choose_allstars(void) {
@@ -2177,11 +2195,11 @@ static int trigger_selftest(void) {
 }
 
 static void usage(void) {
-    printf("usage: vssmb [rom.nes | suprmrio.zip] [--allstars FILE] [--play] [--selftest N out.png] [--ui-shot out.png [tab [frames]]]\n"
+    printf("usage: vssmb [rom.nes | rom.zip | suprmrio.zip] [--allstars FILE] [--play] [--selftest N out.png] [--ui-shot out.png [tab [frames]]]\n"
            "             [--game-shot out.png [frames] [--state-load state]] [--rewind-test N] [--reset-test N]\n"
            "             [--list-controllers [out.txt]] [--list-modes [out.txt]] [--chord-test] [--trigger-test] [--stats out.txt]\n"
            "             [--touch] [--touch-test] [--quit-after frames] [--update-check] [--update-test VERSION [args...]]\n"
-           "  --allstars FILE: your Super Mario All-Stars ROM (.sfc) for the remastered graphics and music.\n"
+           "  --allstars FILE: your Super Mario All-Stars ROM (.sfc, .smc, or a .zip with one) for the remastered graphics and music.\n"
            "  --reset-test N: Play > Reset game after N frames must be instant and restart the game.\n"
            "  --update-check: what the Updates tab's check finds. --update-test: the same as if this build were\n"
            "  VERSION, then installs the newest release over this program and starts it with args (scratch folders only)\n");
@@ -2501,6 +2519,7 @@ int main(int argc, char **argv) {
     input_init();
     build_res_list(SDL_GetWindowDisplayIndex(window));
     touchpad_enable(touch_flag);
+    touchpad_set_controls(cfg.touch_controls);
     build_menu();
     update_title();
 
@@ -2739,7 +2758,14 @@ int main(int argc, char **argv) {
             if (touchpad_enabled()) {   /* the phone edition's on-screen controls */
                 int ow, oh;
                 SDL_GetRendererOutputSize(renderer, &ow, &oh);
-                if (touchpad_handle_event(&ev, ow, oh, state == ST_GAME) && state == ST_GAME) { open_menu(); continue; }
+                int t = touchpad_handle_event(&ev, ow, oh, state == ST_GAME);
+                if (t == TOUCHPAD_TOGGLED) {   /* the small button at the top right: kept as a setting */
+                    cfg.touch_controls = touchpad_controls();
+                    write_config();
+                    osd("On-screen controls %s", cfg.touch_controls ? "on" : "off");
+                    continue;
+                }
+                if (t == TOUCHPAD_MENU && state == ST_GAME) { open_menu(); continue; }
             }
             if (state == ST_MENU) {
                 if (ev.type == SDL_KEYDOWN && !menu.capture && ev.key.keysym.sym == SDLK_F11) { toggle_fullscreen(); continue; }
