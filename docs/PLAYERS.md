@@ -19,7 +19,8 @@ Getting started
 Remastered graphics (optional)
 ------------------------------
 With your own Super Mario All-Stars ROM (SNES, USA version; the Wii and Switch
-Online copies of it also work) the game can look like All-Stars' Super Mario Bros.
+Online copies of it and Super Mario All-Stars + Super Mario World, USA, also work)
+the game can look like All-Stars' Super Mario Bros.
 On the ROM tab choose "Choose All-Stars ROM..." and pick the .sfc file or a .zip
 with it (or drop it onto the window). Its hash is checked and the path remembered;
 then Graphics > Graphics switches between Arcade and All-Stars. Levels, sprites,

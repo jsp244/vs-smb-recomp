@@ -43,7 +43,8 @@ storage, checks its hash and remembers it, so this happens once.
 Alternatively put the file in Android/data/org.vssmb.nativeport/files/ on the shared
 storage (org.vssmb.nativeport.touch for the phone app); the app finds it there by itself.
 
-Remastered graphics: with your own Super Mario All-Stars ROM (SNES, USA), choose "Choose
+Remastered graphics: with your own Super Mario All-Stars ROM (SNES, USA, or All-Stars + World,
+USA), choose "Choose
 All-Stars ROM..." on the ROM tab and pick the .sfc file or a .zip with it (or put it in the
 same folder as the dump); then Graphics > Graphics switches between Arcade and All-Stars.
 Run-ahead is off while the All-Stars graphics are on (drawing them for the frames ahead
