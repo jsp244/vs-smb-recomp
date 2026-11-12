@@ -51,7 +51,8 @@ this game: its four level palettes give exactly the NES version's colours), so
 to the NES console's composite palette instead.
 
 **Remastered graphics (Super Mario All-Stars).** With your own *Super Mario All-Stars*
-ROM (SNES, USA; also the Wii and Switch Online copies of it) the game can be shown with
+ROM (SNES, USA; also the Wii and Switch Online copies of it, and *Super Mario All-Stars +
+Super Mario World*, USA) the game can be shown with
 the graphics of All-Stars' Super Mario Bros.: on the ROM tab "Choose All-Stars ROM..."
 (or drop the `.sfc` onto the window, or `--allstars FILE`), then **Graphics > Graphics:
 Arcade / All-Stars**. The ROM is hash-checked and remembered; nothing from it is stored
@@ -273,6 +274,13 @@ Verified (headless harness with scripted input and RAM pokes, screenshots inspec
   the title, the PUSH BUTTON screen and play remastered. The whole 512-pixel widescreen
   canvas costs about 2.4 ms per frame on a laptop CPU and 4.2 ms on the Deck (the
   emulation itself 2.3 ms there), well inside a 60 Hz frame
+* *Super Mario All-Stars + Super Mario World* (USA): the same pictures and music as the
+  USA ROM, compared pixel for pixel at 4:3 and 16:9 in the 40 level runs, the castles'
+  float runs, 8-4's water area, the path from 8-4's axe through the game's end, the name
+  entry and the coin screen at one to four credits, the walk scenes and the castle at
+  every flagpole (all but the intermissions of the four test runs that poke an area number
+  their world does not have, which both draw as garbage); every All-Stars area set up in
+  every world comes out the same
 * All-Stars' music, against All-Stars itself run in a reference SNES emulator (LakeSnes,
   playing the ROM from power-on to 1-1): the sound unit's RAM after the port's uploads is
   All-Stars' byte for byte but for the program's variables; in 1-1 the ground theme's

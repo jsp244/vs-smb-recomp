@@ -306,8 +306,14 @@ and the 40 level runs are unchanged.
 ## Remastered graphics (Super Mario All-Stars)
 
 `runtime/allstars.c` draws the frame as Super Mario All-Stars draws Super Mario
-Bros., from the player's own All-Stars ROM (hash-checked; USA, and the Wii and
-Switch Online copies whose banks $03-$0C are the same). All-Stars' SMB1 is the NES
+Bros., from the player's own All-Stars ROM (hash-checked; USA, the Wii and Switch
+Online copies whose banks $03-$0C are the same, and All-Stars + World, USA). The
+latter has Super Mario Bros. as the USA ROM has it but for a few changes of its own (a
+task more at the game's end, its game-over menu's tasks, a bound in the vine's code),
+after which some stretches of code and tables in banks $03 and $05 come 2 to $51 bytes
+later: `at()` takes the USA addresses there (the table of those stretches is all the
+port needs: every area's setup comes out the same, and the sprites' tables and the
+music's streams are the same bytes). All-Stars' SMB1 is the NES
 engine rewritten in 65816 code: most of the RAM layout and the object and metatile
 logic are the NES game's, the art and the PPU setup are new. Rather than describing
 that art, the port runs All-Stars' own code in a sandbox SNES: `cpu816.c` (the whole

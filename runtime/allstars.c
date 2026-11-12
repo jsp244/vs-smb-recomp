@@ -40,7 +40,8 @@
  * arcade's pixels, lit and outlined as All-Stars draws (screen_icons).
  *
  * Addresses below are those of the USA ROM (and the Wii and Switch Online copies, whose banks $03-$0C
- * are the same); they are knowledge about the program, not data from it.
+ * are the same); All-Stars + World has a few stretches of them moved by some bytes, which at() follows.
+ * They are knowledge about the program, not data from it.
  */
 #include "allstars.h"
 #include "widescreen.h"
@@ -58,11 +59,26 @@
 bool allstars_enabled = true;
 
 /* ---- the ROM ---- */
-static const struct { const char *sha1; const char *name; } known[] = {
-    { "c05817c5b7df2fbfe631563e0b37237156a8f6b6", "Super Mario All-Stars (USA)" },
-    { "aea8b8a6ebb6603831ea02409757e76ee4c62377", "Super Mario All-Stars (USA) (Wii)" },
-    { "9779d804befecd7f79933a947f4d5843d50dd652", "Super Mario All-Stars (USA, Europe) (Switch Online)" },
-    { NULL, NULL }
+
+/* All-Stars + World (USA) has Super Mario Bros. as the USA ROM has it, data and code, but for its own few changes
+   (a task more for the game's end and its new routine, its game-over menu's, a bound in the vine's code), after
+   which stretches of the code and tables come some bytes later (into what was free space): the USA ROM's
+   stretches [from, to) it has `by` bytes on */
+typedef struct { uint32_t from, to; int32_t by; } moved_t;
+static const moved_t world_moved[] = {
+    { 0x038916, 0x038986, 0x02 },   /* after the game end's task list, an entry longer */
+    { 0x038986, 0x039D4B, 0x0D },   /* after the new task's routine: the text, the metatile tables, the title */
+    { 0x03BA94, 0x03C398, 0x08 },   /* after the vine's bound: the block bumps, the used block */
+    { 0x05DCB9, 0x05EFAF, 0x51 },   /* the sprites' sizes, the shells, the star's colours */
+    { 0, 0, 0 }
+};
+
+static const struct { const char *sha1; const char *name; const moved_t *moved; } known[] = {
+    { "c05817c5b7df2fbfe631563e0b37237156a8f6b6", "Super Mario All-Stars (USA)", NULL },
+    { "aea8b8a6ebb6603831ea02409757e76ee4c62377", "Super Mario All-Stars (USA) (Wii)", NULL },
+    { "9779d804befecd7f79933a947f4d5843d50dd652", "Super Mario All-Stars (USA, Europe) (Switch Online)", NULL },
+    { "d245e41a2b590f7d63666b0772cbddfb26f254a2", "Super Mario All-Stars + Super Mario World (USA)", world_moved },
+    { NULL, NULL, NULL }
 };
 
 static struct {
@@ -70,60 +86,68 @@ static struct {
     size_t   size;
     char     path[1024], name[96], sha1_hex[41], md5_hex[33];
     uint32_t crc32;
+    const moved_t *moved;   /* where its addresses are not the USA ROM's (NULL: they all are) */
 } as;
 
-/* All-Stars addresses (USA) */
-#define SMB1_START       0x038000   /* JMP to the game's start-up */
-#define SMB1_START_WAIT  0x0381A9   /* the start-up's wait for the first NMI */
-#define SMB1_NMI         0x038003   /* JMP to the NMI routine, which returns with RTL */
-#define INIT_AREA        0x039E0C   /* InitializeArea (JSR) */
-#define AREA_GRAPHICS    0x04956B   /* the area's tilesets, palettes, layers 2 and 3, HDMA (JSL) */
-#define AREA_COLORS      0x049A88   /* the sky's color into the fixed color (color 0 black), the player's palette */
-#define PARSER_CORE      0x03A436   /* AreaParserCore (JSR) */
-#define CLEAR_SCREEN     0x048000   /* layers 1 and 2 to tile $24, layer 3 to $28 (JSL) */
-#define INTER_PLAYER     0x03F861   /* the intermission's player (the head icon) and the world picture's objects (JSR) */
-#define INTER_PICTURE    0x0492E7   /* the intermission's world picture (JSL) */
-#define WRITE_TEXT       0x0390FC   /* WriteGameText, A = 1: the world and the lives (JSR) */
-#define INTER_LIVES      0x039224   /* the lives' digits (JSR) */
-#define SPR_OFFSETS      0x039D70   /* the OAM offsets InitializeArea gives the player and the objects ($0B45-$0B61) */
+/* a USA ROM address where the loaded ROM has it */
+static uint32_t at(uint32_t a) {
+    for (const moved_t *m = as.moved; m && m->to; m++)
+        if (a >= m->from && a < m->to) return (uint32_t)((int32_t)a + m->by);
+    return a;
+}
+
+/* All-Stars addresses (the USA ROM's, at() the loaded ROM's) */
+#define SMB1_START       at(0x038000) /* JMP to the game's start-up */
+#define SMB1_START_WAIT  at(0x0381A9) /* the start-up's wait for the first NMI */
+#define SMB1_NMI         at(0x038003) /* JMP to the NMI routine, which returns with RTL */
+#define INIT_AREA        at(0x039E0C) /* InitializeArea (JSR) */
+#define AREA_GRAPHICS    at(0x04956B) /* the area's tilesets, palettes, layers 2 and 3, HDMA (JSL) */
+#define AREA_COLORS      at(0x049A88) /* the sky's color into the fixed color (color 0 black), the player's palette */
+#define PARSER_CORE      at(0x03A436) /* AreaParserCore (JSR) */
+#define CLEAR_SCREEN     at(0x048000) /* layers 1 and 2 to tile $24, layer 3 to $28 (JSL) */
+#define INTER_PLAYER     at(0x03F861) /* the intermission's player (the head icon) and the world picture's objects (JSR) */
+#define INTER_PICTURE    at(0x0492E7) /* the intermission's world picture (JSL) */
+#define WRITE_TEXT       at(0x0390FC) /* WriteGameText, A = 1: the world and the lives (JSR) */
+#define INTER_LIVES      at(0x039224) /* the lives' digits (JSR) */
+#define SPR_OFFSETS      at(0x039D70) /* the OAM offsets InitializeArea gives the player and the objects ($0B45-$0B61) */
 #define OAM_BUFFER       0x0800     /* where All-Stars builds its OAM (544 bytes) */
-#define OAM_SIZES        0x05DD7A   /* each sprite's size and X bit 8 ($0C00 + 4n) into the OAM's high table, once a frame ($03:82D4) (JSL) */
-#define MAP16_LO         0x039438   /* low bytes of the four metatile groups' tables (bank $03) */
-#define MAP16_HI         0x03943C
-#define FLOATEY_TILES    0x038B0C   /* the floating points' two tiles per value (its FloateyNumTileData) */
-#define AS_USED_BLOCK    0x03BEC6   /* PlayerHeadCollision: LDY #used block */
-#define AS_BUMP_PLACE    0x03BED1   /* ... LDA #metatile / STA ($06),y: the place of a bouncing block */
-#define AS_VINE_CELL     0x03BA99   /* the vine: LDA #metatile / STA ($06),y, the cells it climbs */
-#define LEVEL_AREA_PTR   0x04C01F   /* LoadAreaPointer's lookup: the level's first area pointer in A, by world and area number (JSL) */
-#define AREA_TYPE_OFS    0x04C190   /* first area index of each area type */
-#define AREA_PTR_LO      0x04C194   /* area data pointers by area index (bank $04) */
-#define AREA_PTR_HI      0x04C1B6
-#define PLAYER_COLORS    0x0499FD   /* the player's 16 colours: Mario, Luigi, then fiery Mario and Luigi ($20 bytes each) */
-#define STAR_COLORS      0x05ED40   /* the star's cycle: 4 sets of 16 colours, Luigi's a set later */
-#define BOWSER_TILES     0x05CF20   /* Bowser's 7 frames of 6 tiles facing right, then the 7 facing left ($05:D055) */
-#define FLAME_TILES      0x05CDE2   /* Bowser's flame: 3 frames ($05:CD01), then its spark's 3 */
-#define BULLET_TILES     0x05CB38   /* a Bullet Bill's 10 frames ($05:CB42) */
-#define SHELL_TILES      0x05E9E8   /* shells: 4 turns of 2x2 tiles, Koopas', Buzzy Beetles', then upside down ($05:E879) */
-#define SHELL_FLIPS      0x05EA28   /* the turns' mirroring */
-#define CLOUD_TILES      0x05CEDB   /* the cloud lift: 4 frames of 8 tiles, their attributes and places ($05:CDEB) */
-#define CLOUD_ATTRS      0x05CEFB
-#define CLOUD_X          0x05CF1B
-#define PRINCESS_TILES   0x04DD4E   /* the princess's poses ($04:DCBB) */
-#define TOAD_HEAD        0x04F4B7   /* a Toad standing free in a scene ($04:F4B6): his head, an 8x8 tile twice (mirrored), */
-#define TOAD_BODY        0x04F4C5   /* his body below it, one 16x16 sprite ($04:F4C4), */
-#define TOAD_ATTR        0x04F4CD   /* and their attributes ($04:F4CC) */
-#define FIREWORK_TILES   0x03F53B   /* a firework's 4 rings ($03:F548), then the palettes it cycles through */
-#define FIREWORK_PALS    0x03F53F
-#define RETAINER_GFX     0x1EC000   /* the sack's OBJ tiles, then the princess's ($04:ECCA) */
-#define RETAINER_SETS    0x04ED5A   /* each world's second set: Toad's ($04:ED07) */
-#define RETAINER_DRAW    0x04ED7A   /* Toad's sack, then each world's scene */
-#define PLAYER_FRAMES    0x0A8000   /* 256 bytes (8 tiles) per pose number / 8; Luigi +$4000 */
-#define ENEMY_ATTR       0x03EEA9   /* sprite attributes per enemy type */
-#define ENEMY_GFX        0x03ED8C   /* EnemyGraphicsTable: 6 tiles per frame, NES numbers mostly */
-#define POWERUP_GFX      0x03ECEF   /* PowerUpGfxTable: 4 tiles per power-up */
-#define BG3_MAP16        0x04BD09   /* layer 3's 16x16 tiles: 4 tilemap words each (top left, bottom left, top right, bottom right) */
-#define ANIM_TILES       0x06C000   /* 8 frames of $800 bytes; the first $600 go to BG tiles $C0-$EF */
-#define ANIM_HUD_TILES   0x0CFB00   /* 8 frames of $40 bytes for BG3 tiles $2C-$2F (the status bar's coin) */
+#define OAM_SIZES        at(0x05DD7A) /* each sprite's size and X bit 8 ($0C00 + 4n) into the OAM's high table, once a frame ($03:82D4) (JSL) */
+#define MAP16_LO         at(0x039438) /* low bytes of the four metatile groups' tables (bank $03) */
+#define MAP16_HI         at(0x03943C)
+#define FLOATEY_TILES    at(0x038B0C) /* the floating points' two tiles per value (its FloateyNumTileData) */
+#define AS_USED_BLOCK    at(0x03BEC6) /* PlayerHeadCollision: LDY #used block */
+#define AS_BUMP_PLACE    at(0x03BED1) /* ... LDA #metatile / STA ($06),y: the place of a bouncing block */
+#define AS_VINE_CELL     at(0x03BA99) /* the vine: LDA #metatile / STA ($06),y, the cells it climbs */
+#define LEVEL_AREA_PTR   at(0x04C01F) /* LoadAreaPointer's lookup: the level's first area pointer in A, by world and area number (JSL) */
+#define AREA_TYPE_OFS    at(0x04C190) /* first area index of each area type */
+#define AREA_PTR_LO      at(0x04C194) /* area data pointers by area index (bank $04) */
+#define AREA_PTR_HI      at(0x04C1B6)
+#define PLAYER_COLORS    at(0x0499FD) /* the player's 16 colours: Mario, Luigi, then fiery Mario and Luigi ($20 bytes each) */
+#define STAR_COLORS      at(0x05ED40) /* the star's cycle: 4 sets of 16 colours, Luigi's a set later */
+#define BOWSER_TILES     at(0x05CF20) /* Bowser's 7 frames of 6 tiles facing right, then the 7 facing left ($05:D055) */
+#define FLAME_TILES      at(0x05CDE2) /* Bowser's flame: 3 frames ($05:CD01), then its spark's 3 */
+#define BULLET_TILES     at(0x05CB38) /* a Bullet Bill's 10 frames ($05:CB42) */
+#define SHELL_TILES      at(0x05E9E8) /* shells: 4 turns of 2x2 tiles, Koopas', Buzzy Beetles', then upside down ($05:E879) */
+#define SHELL_FLIPS      at(0x05EA28) /* the turns' mirroring */
+#define CLOUD_TILES      at(0x05CEDB) /* the cloud lift: 4 frames of 8 tiles, their attributes and places ($05:CDEB) */
+#define CLOUD_ATTRS      at(0x05CEFB)
+#define CLOUD_X          at(0x05CF1B)
+#define PRINCESS_TILES   at(0x04DD4E) /* the princess's poses ($04:DCBB) */
+#define TOAD_HEAD        at(0x04F4B7) /* a Toad standing free in a scene ($04:F4B6): his head, an 8x8 tile twice (mirrored), */
+#define TOAD_BODY        at(0x04F4C5) /* his body below it, one 16x16 sprite ($04:F4C4), */
+#define TOAD_ATTR        at(0x04F4CD) /* and their attributes ($04:F4CC) */
+#define FIREWORK_TILES   at(0x03F53B) /* a firework's 4 rings ($03:F548), then the palettes it cycles through */
+#define FIREWORK_PALS    at(0x03F53F)
+#define RETAINER_GFX     at(0x1EC000) /* the sack's OBJ tiles, then the princess's ($04:ECCA) */
+#define RETAINER_SETS    at(0x04ED5A) /* each world's second set: Toad's ($04:ED07) */
+#define RETAINER_DRAW    at(0x04ED7A) /* Toad's sack, then each world's scene */
+#define PLAYER_FRAMES    at(0x0A8000) /* 256 bytes (8 tiles) per pose number / 8; Luigi +$4000 */
+#define ENEMY_ATTR       at(0x03EEA9) /* sprite attributes per enemy type */
+#define ENEMY_GFX        at(0x03ED8C) /* EnemyGraphicsTable: 6 tiles per frame, NES numbers mostly */
+#define POWERUP_GFX      at(0x03ECEF) /* PowerUpGfxTable: 4 tiles per power-up */
+#define BG3_MAP16        at(0x04BD09) /* layer 3's 16x16 tiles: 4 tilemap words each (top left, bottom left, top right, bottom right) */
+#define ANIM_TILES       at(0x06C000) /* 8 frames of $800 bytes; the first $600 go to BG tiles $C0-$EF */
+#define ANIM_HUD_TILES   at(0x0CFB00) /* 8 frames of $40 bytes for BG3 tiles $2C-$2F (the status bar's coin) */
 #define N_SMAS_AREAS     0x22
 
 /* VS. Super Mario Bros. addresses */
@@ -677,7 +701,7 @@ static void map_metatiles(void) {
     /* the ones VS. writes during play as All-Stars' own code writes them: PlayerHeadCollision's place of
        a bouncing block (VS. $23; LDA #$27 / STA ($06),y) and the used block (VS. $C4; LDY #$FC), the
        vine's climbing cells (VS. $26; LDA #$2A / STA ($06),y) */
-    static const struct { uint8_t vs, opcode; uint32_t at; } play[] = {
+    const struct { uint8_t vs, opcode; uint32_t at; } play[] = {
         { 0x23, 0xA9, AS_BUMP_PLACE }, { 0xC4, 0xA0, AS_USED_BLOCK }, { 0x26, 0xA9, AS_VINE_CELL },
     };
     for (size_t i = 0; i < sizeof play / sizeof play[0]; i++)
@@ -714,7 +738,7 @@ static const struct { uint32_t at; uint8_t op; } deco_at[N_DECO] = {
     { 0x049156, 0xA9 },
     { 0x049166, 0xA9 },                                                               /* $3E coral */
 };
-#define AS_BB_BOUNDS_CMP 0x03A5B2   /* AreaParserCore: CMP BlockBuffLowBounds,y (what is solid, by group) */
+#define AS_BB_BOUNDS_CMP at(0x03A5B2) /* AreaParserCore: CMP BlockBuffLowBounds,y (what is solid, by group) */
 static uint8_t deco[N_DECO], deco_bound[4];
 static bool deco_ok;
 
@@ -733,8 +757,9 @@ static bool deco_ok;
 static void map_decorations(void) {
     deco_ok = false;
     for (int i = 0; i < N_DECO; i++) {
-        if (rom8(deco_at[i].at - 1) != deco_at[i].op) return;
-        deco[i] = rom8(deco_at[i].at);
+        uint32_t a = at(deco_at[i].at);
+        if (rom8(a - 1) != deco_at[i].op) return;
+        deco[i] = rom8(a);
     }
     if (rom8(AS_BB_BOUNDS_CMP) != 0xD9) return;
     uint16_t t = rom16(AS_BB_BOUNDS_CMP + 1);
@@ -1667,7 +1692,7 @@ int allstars_load(const char *path, char *err, size_t errlen) {
     for (k = 0; known[k].sha1; k++) if (!strcmp(known[k].sha1, hex)) break;
     if (!known[k].sha1) {
         free(data);
-        snprintf(err, errlen, "unknown version (SHA-1 %.12s...): the USA Super Mario All-Stars is needed", hex);
+        snprintf(err, errlen, "unknown version (SHA-1 %.12s...): the USA Super Mario All-Stars (or All-Stars + World) is needed", hex);
         return -1;
     }
     allstars_unload();
@@ -1678,6 +1703,7 @@ int allstars_load(const char *path, char *err, size_t errlen) {
     as.size = size;
     snprintf(as.path, sizeof as.path, "%s", path);
     snprintf(as.name, sizeof as.name, "%s", known[k].name);
+    as.moved = known[k].moved;
     memcpy(as.sha1_hex, hex, sizeof hex);
     memcpy(as.md5_hex, mdhex, sizeof mdhex);
     as.crc32 = rom_crc32(as.rom, as.size);
@@ -1708,10 +1734,10 @@ int allstars_loaded(void) { return as.rom != NULL; }
    starts when he appears ($03:D6B6), as in All-Stars. VS.'s sound effects stay: while All-Stars'
    music plays, the APU's squares and noise are heard only while an effect uses them (Square1/2
    SoundBuffer $F1/$F2, NoiseSoundBuffer $F3), its triangle not at all. */
-#define SND_MENU_A       0x07FC00   /* the menu's stream: $400 bytes here, then the rest at SND_MENU_B */
-#define SND_MENU_B       0x3B8000
-#define SND_SAMPLES      0x0B8000   /* the instruments: their directory and samples ($00:8AA3, at the title) */
-#define SND_SMB1         0x1F8000   /* Super Mario Bros.' songs ($00:8B17) */
+#define SND_MENU_A       at(0x07FC00) /* the menu's stream: $400 bytes here, then the rest at SND_MENU_B */
+#define SND_MENU_B       at(0x3B8000)
+#define SND_SAMPLES      at(0x0B8000) /* the instruments: their directory and samples ($00:8AA3, at the title) */
+#define SND_SMB1         at(0x1F8000) /* Super Mario Bros.' songs ($00:8B17) */
 #define SND_DRIVER       0x0500     /* where each stream starts the program */
 #define MUS_RING         8192
 #define MUS_GAIN         1.16       /* All-Stars' mix, brought to the APU's loudness (both RMS about 1,390 in 1-1) */
@@ -2551,9 +2577,9 @@ static void special_objects(const uint8_t *r, const uint8_t *oam, int dx, const 
    BridgeCollapseOffset ($0369) and that counter, after the last piece from his fall (bowser_fall). r is RAM a
    frame ahead of the picture's sprites (VictoryMode runs no GameEngine), as All-Stars' picture shows what its
    routine drew a frame earlier. The frame, or -1 when he does not roar. */
-#define AS_ROAR_START    0x03D53C   /* BridgeCollapse's first step: LDA #$08 / STA $014B / LDA #$FF / STA $0F4C */
-#define BOWSER_POSES     0x05CF74   /* the frame for each $014B: the walk's six (by $014B / 8), the fire's two, the roar's two */
-#define BOWSER_ROAR      0x05CF7E   /* the roar's two indices into BOWSER_POSES, by bit 2 of $0F4C */
+#define AS_ROAR_START    at(0x03D53C) /* BridgeCollapse's first step: LDA #$08 / STA $014B / LDA #$FF / STA $0F4C */
+#define BOWSER_POSES     at(0x05CF74) /* the frame for each $014B: the walk's six (by $014B / 8), the fire's two, the roar's two */
+#define BOWSER_ROAR      at(0x05CF7E) /* the roar's two indices into BOWSER_POSES, by bit 2 of $0F4C */
 #define VS_BOX_CTRL      0xE153     /* BoundBoxCtrlData: each bounding box's corners from the object's place */
 
 /* the frames since Bowser's last piece went, as of r: MoveEnemySlowVert ($BE9B) adds $0F a frame to his move
@@ -2629,9 +2655,9 @@ static void draw_bowser(snesppu_t *p, const uint8_t *r, struct special sp[6]) {
    (MoveEnemySlowVert, $BE9B: his downward force grows by $0F a frame from InitVStf's 0); the rubble starts the frame
    VS.'s nametable shows the piece gone, as All-Stars' leaves its layer 1 the frame its rubble appears. Placed with
    layer 1's scroll. */
-#define AS_RUBBLE_TILES  0x05CAE5
-#define AS_RUBBLE_DROP   0x05CB2D
-#define AS_RUBBLE_Y      0x05CA3E   /* ADC #$A0: the bridge's line */
+#define AS_RUBBLE_TILES  at(0x05CAE5)
+#define AS_RUBBLE_DROP   at(0x05CB2D)
+#define AS_RUBBLE_Y      at(0x05CA3E) /* ADC #$A0: the bridge's line */
 static void bridge_rubble(snesppu_t *p) {
     int b = ram[0x0368], k = ram[0x0369], d;   /* BowserFront_Offset, BridgeCollapseOffset */
     /* VictoryMode (VS.'s OperMode 3: its HandleAxeMetatile, $DD67) in its first task, with Bowser in his slot */
@@ -3240,7 +3266,7 @@ static void level_text(snesppu_t *p, int title) {
 
 /* All-Stars' title on layer 1, from its own DrawTitleScreen ($03:8E65: its stripes into the $1700
    buffer) and NMI, run once in the screens' sandbox */
-#define DRAW_TITLE       0x038E65
+#define DRAW_TITLE       at(0x038E65)
 static uint16_t as_title[32 * 32];
 static int as_title_state;   /* 0 = not built, 1 = built, -1 = failed */
 
