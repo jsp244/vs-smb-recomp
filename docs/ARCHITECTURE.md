@@ -10,10 +10,10 @@
    reference interpreter.
 3. Ordinary tooling only: C11, GNU make, Python 3, SDL2.
 
-The runtime, the frontend and the recompiler come from the StarTropics native
-port (the same design); what is specific to this game is the Vs. System board,
-its palette, the flat 32 KiB recompilation unit, the jump-table discovery, the
-cabinet controls and the widescreen bands.
+Most of the runtime, the frontend and the recompiler is general NES code; what
+is specific to this game is the Vs. System board, its palette, the flat 32 KiB
+recompilation unit, the jump-table discovery, the cabinet controls and the
+widescreen bands.
 
 ## Components
 
@@ -129,8 +129,8 @@ comparable.
 * With 32 KiB of PRG the board has no bank switching, so the whole of
   `$8000-$FFFF` is one unit (`--layout flat`, chosen automatically): one entry
   table of 32768 slots, routines may span the old 8 KiB boundaries, and stores
-  to ROM need no dispatcher exit. (The 8 KiB "mmc3" layout of the StarTropics port
-  is still there for other boards.)
+  to ROM need no dispatcher exit. (The 8 KiB "mmc3" layout is still there for
+  other boards.)
 * Recursive descent from the reset/NMI/IRQ vectors follows fallthrough, branches,
   JMP abs and the return path of JSR, except after a JSR to a routine labelled
   `JumpEngine...` in `recomp/symbols.txt`: SMB's dispatcher pops its return

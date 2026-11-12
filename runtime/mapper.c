@@ -1,7 +1,7 @@
 /*
  * mapper.c - NROM (0), MMC1 (1), MMC3/MMC6 (4) and Vs. System (99) support.
  *
- * MMC6 is the StarTropics variant of the MMC3: 1 KiB of battery RAM with
+ * MMC6 is a variant of the MMC3: 1 KiB of battery RAM with
  * per-half read/write enables instead of the MMC3's 8 KiB (kept for the
  * mapper test ROMs). The Vs. System board has fixed PRG, an 8 KiB CHR bank
  * chosen by bit 2 of the $4016 writes (see mem.c) and 2 KiB of work RAM at

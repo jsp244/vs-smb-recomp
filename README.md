@@ -3,8 +3,7 @@
 A native Windows, Linux, Steam Deck and Android build of Nintendo's arcade *VS. Super
 Mario Bros.* (Vs. System, 1986), produced by **statically recompiling your own dump of
 the board** into C and linking it against a small hardware runtime (PPU with the
-arcade's RGB palette, APU, the Vs. System's mapper, coin slots and DIP switches), the
-same way as the StarTropics port this one is built from.
+arcade's RGB palette, APU, the Vs. System's mapper, coin slots and DIP switches).
 
 This repository contains **no game data and no game code**. The recompiler, the
 runtime and the frontend are original work (MIT licence), but for the SNES sound unit
@@ -103,7 +102,7 @@ are built in. There are no RetroAchievements: no set exists for this game. Esc i
 game opens the same menu as a pause screen.
 
 **16:9 (widescreen)** and **16:10 (widescreen)** are real widescreen views, not a
-stretch, as in the StarTropics port. The NES picture is 256 pixels wide, but the
+stretch. The NES picture is 256 pixels wide, but the
 game keeps a 512-pixel window of the level in its two nametables (it renders 90-128
 pixels ahead of the right edge, and what scrolled out on the left stays there), so
 the port draws those columns beside the picture with the scroll, CHR bank and

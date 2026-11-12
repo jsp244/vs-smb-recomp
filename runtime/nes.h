@@ -35,7 +35,7 @@ typedef struct {
     int      submapper;
     bool     nes2;
     bool     battery;
-    bool     mmc6;          /* MMC6 (StarTropics / Zoda's Revenge) semantics */
+    bool     mmc6;          /* MMC6 semantics: 1 KiB of battery RAM */
     bool     vs;            /* Vs. System: coin and DIP switch inputs, 2 KiB of work RAM at $6000 */
     int      vs_ppu;        /* NES 2.0 Vs. PPU type (5 = RP2C04-0004), -1 = a 2C02 */
     bool     four_screen;
