@@ -103,6 +103,7 @@ typedef struct {
     int continue_lives;  /* switch 8: lives after a continue, 0 four, 1 three */
     int allstars;        /* graphics: 0 the arcade's, 1 Super Mario All-Stars' (needs that ROM: allstars_rom) */
     int music;           /* 0 the one that goes with the graphics, 1 the arcade's, 2 Super Mario All-Stars' (that ROM too) */
+    int touch_controls;  /* the phone edition's on-screen controls: 1 shown, 0 only the small button that brings them back */
     char rom[2048];
     char allstars_rom[2048];
 } config_t;
@@ -113,7 +114,8 @@ static config_t cfg = {
     .window_size = 3, .display_mode = 0, .resolution = 0, .res_w = 0, .res_h = 0, .scaling = 1, .aspect = 1, .colors = 0, .filter = 2,
     .shader = 0, .shader_strength = 1, .overscan = 1, .no_sprite_limit = 0, .walk_to_edge = 1, .volume = 100,
     .lowlat = 1, .runahead = GAME_LAG, .audio_latency = 1, .rewind = 1, .state_slot = 1,
-    .coinage = 0, .lives = 0, .bonus = 0, .fast_timer = 0, .continue_lives = 0, .allstars = 1, .music = 0, .rom = "", .allstars_rom = ""
+    .coinage = 0, .lives = 0, .bonus = 0, .fast_timer = 0, .continue_lives = 0, .allstars = 1, .music = 0, .touch_controls = 1,
+    .rom = "", .allstars_rom = ""
 };
 
 static const char *const display_modes[] = { "Windowed", "Fullscreen", "Fullscreen (exclusive)" };
@@ -439,7 +441,9 @@ static void write_config(void) {
     fprintf(f, "overscan=%d            ; crop 8 lines at the top and bottom\n", cfg.overscan);
     fprintf(f, "no_sprite_limit=%d     ; 1: draw every sprite on a line instead of 8 (no flicker)\n", cfg.no_sprite_limit);
     fprintf(f, "walk_to_edge=%d        ; 1: in a widescreen view the player may walk left into the band beside the picture\n", cfg.walk_to_edge);
-    fprintf(f, "low_latency=%d        ; 1: frame delay, locked to the display (Windows, Android) or timer pacing without vsync (Linux); 0: plain timer (Linux: vsync)\n", cfg.lowlat);
+    if (touchpad_enabled())
+        fprintf(f, "touch_controls=%d      ; 1: the on-screen controls show; 0: only the small button at the top right that brings them back\n", cfg.touch_controls);
+    fprintf(f, "low_latency=%d       ; 1: frame delay, locked to the display (Windows, Android) or timer pacing without vsync (Linux); 0: plain timer (Linux: vsync)\n", cfg.lowlat);
     fprintf(f, "runahead=%d            ; frames of run-ahead (0-3; none while allstars=1 draws the All-Stars graphics); the game shows a press %d frame%s after it\n",
             cfg.runahead, GAME_LAG, GAME_LAG == 1 ? "" : "s");
     fprintf(f, "audio_latency=%d       ; 0 low (~25 ms), 1 normal (~45 ms), 2 safe (~90 ms)\n", cfg.audio_latency);
@@ -508,6 +512,7 @@ static void load_config(void) {
         else if (!strcmp(key, "overscan")) cfg.overscan = atoi(val) ? 1 : 0;
         else if (!strcmp(key, "no_sprite_limit")) cfg.no_sprite_limit = atoi(val) ? 1 : 0;
         else if (!strcmp(key, "walk_to_edge")) cfg.walk_to_edge = atoi(val) ? 1 : 0;
+        else if (!strcmp(key, "touch_controls")) cfg.touch_controls = atoi(val) ? 1 : 0;
         else if (!strcmp(key, "rewind_enabled")) cfg.rewind = atoi(val) ? 1 : 0;
         else if (!strcmp(key, "state_slot")) { int v = atoi(val); if (v >= 1 && v <= 9) cfg.state_slot = v; }
         else if (!strcmp(key, "coinage")) { int v = atoi(val); if (v >= 0 && v <= 7) cfg.coinage = v; }
@@ -1764,6 +1769,7 @@ static void build_menu(void) {
     if (touchpad_enabled())
         snprintf(ctl_items[K_TOTAL + 2].info, sizeof ctl_items[K_TOTAL + 2].info, "%s",
                  "On the screen: d-pad, B, A, COIN (insert coin), START (1 player), and MENU for this menu (Back works too). "
+                 "The small button at the top right switches them off and on. "
                  "A controller can be used as well: the screen's controls step aside until you touch it again.");
     else if (handheld)
         snprintf(ctl_items[K_TOTAL + 2].info, sizeof ctl_items[K_TOTAL + 2].info, "%s",
@@ -2513,6 +2519,7 @@ int main(int argc, char **argv) {
     input_init();
     build_res_list(SDL_GetWindowDisplayIndex(window));
     touchpad_enable(touch_flag);
+    touchpad_set_controls(cfg.touch_controls);
     build_menu();
     update_title();
 
@@ -2751,7 +2758,14 @@ int main(int argc, char **argv) {
             if (touchpad_enabled()) {   /* the phone edition's on-screen controls */
                 int ow, oh;
                 SDL_GetRendererOutputSize(renderer, &ow, &oh);
-                if (touchpad_handle_event(&ev, ow, oh, state == ST_GAME) && state == ST_GAME) { open_menu(); continue; }
+                int t = touchpad_handle_event(&ev, ow, oh, state == ST_GAME);
+                if (t == TOUCHPAD_TOGGLED) {   /* the small button at the top right: kept as a setting */
+                    cfg.touch_controls = touchpad_controls();
+                    write_config();
+                    osd("On-screen controls %s", cfg.touch_controls ? "on" : "off");
+                    continue;
+                }
+                if (t == TOUCHPAD_MENU && state == ST_GAME) { open_menu(); continue; }
             }
             if (state == ST_MENU) {
                 if (ev.type == SDL_KEYDOWN && !menu.capture && ev.key.keysym.sym == SDLK_F11) { toggle_fullscreen(); continue; }

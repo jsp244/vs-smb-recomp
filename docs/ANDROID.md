@@ -70,7 +70,11 @@ bottom right (a thumb between them presses both, and it can slide from one to th
 COIN and START at the bottom, MENU at the top for this port's menu (the Back gesture opens
 it too). In the menu, tap a tab or a row; tap the arrows of a row to change it. A
 controller can be used as well: the on-screen controls step aside while you play with it
-and come back when you touch the screen.
+and come back when you touch the screen. To keep them away for good (with a Bluetooth
+controller or a phone grip such as a Backbone), tap the small faint controller button at
+the top right: the controls switch off and the button shows crossed out; tap it again to
+bring them back. The choice is remembered. Playing with a controller hides that button
+too; the next touch shows it again without pressing it.
 
 Controls on a handheld
 ----------------------
