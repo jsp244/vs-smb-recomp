@@ -2,8 +2,9 @@ VS. Super Mario Bros. - native PC port
 ======================================
 
 This program contains no game data. To play you need your own dump of the
-VS. Super Mario Bros. arcade board: an iNES .nes file, or MAME's set
-suprmrio.zip. The program checks the hash and refuses anything else.
+VS. Super Mario Bros. arcade board: an iNES .nes file (on its own or in a .zip),
+or MAME's set suprmrio.zip (or suprmrioa.zip, the set whose timer runs faster).
+The program checks the hash and refuses anything else.
 
 Getting started
 ---------------
@@ -19,12 +20,12 @@ Remastered graphics (optional)
 ------------------------------
 With your own Super Mario All-Stars ROM (SNES, USA version; the Wii and Switch
 Online copies of it also work) the game can look like All-Stars' Super Mario Bros.
-On the ROM tab choose "Choose All-Stars ROM..." and pick the .sfc file (or drop it
-onto the window). Its hash is checked and the path remembered; then Graphics >
-Graphics switches between Arcade and All-Stars. Levels, sprites, the status bar and
-the intermission are drawn by All-Stars' own code; the screens only the arcade has
-(the title's "VS.", PUSH BUTTON, continue, the cabinet's buttons) are drawn in
-All-Stars' style. The widescreen views work with it.
+On the ROM tab choose "Choose All-Stars ROM..." and pick the .sfc file or a .zip
+with it (or drop it onto the window). Its hash is checked and the path remembered;
+then Graphics > Graphics switches between Arcade and All-Stars. Levels, sprites,
+the status bar and the intermission are drawn by All-Stars' own code; the screens
+only the arcade has (the title's "VS.", PUSH BUTTON, continue, the cabinet's
+buttons) are drawn in All-Stars' style. The widescreen views work with it.
 
 The ROM also brings All-Stars' music: Audio > Music chooses Arcade or All-Stars
 (All-Stars' own songs, played by its sound program, with the arcade's sound
@@ -138,7 +139,11 @@ they go to %APPDATA%\VSSMBPort\VSSuperMarioBros\ instead (on Linux
 ~/.local/share/VSSMBPort/VSSuperMarioBros/).
 
 The ROM tab shows the SHA-1, MD5 and CRC32 of your dump and whether it matches a
-known VS. Super Mario Bros. dump (MAME's suprmrio set gives the same image).
+known VS. Super Mario Bros. dump: the usual one (MAME's suprmrio set gives the same
+image) or the one with the faster timer (MAME's suprmrioa, also known as the "[a1]"
+dump). Its timer ticks every 17 frames where the usual one's ticks every 20, and every
+13 where the usual one's ticks every 17 with the Timer switch on fast; the rest of
+the game is the same.
 
 Legal
 -----

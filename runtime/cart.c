@@ -116,17 +116,124 @@ uint32_t rom_crc32(const uint8_t *d, size_t n) {
     return ~c;
 }
 
-/* Known VS. Super Mario Bros. dumps (ROM image without header: 32 KiB PRG, then 16 KiB CHR).
-   The first is MAME's "suprmrio" set (chips MDS-SM4-4 1D 1C 1B 1A, 2B 2A, in that order). */
+/* Known VS. Super Mario Bros. dumps (ROM image without header: 32 KiB PRG, then 16 KiB CHR). The first
+   is MAME's "suprmrio" set (chips MDS-SM4-4 1D 1C 1B 1A, 2B 2A, in that order); the second its
+   "suprmrioa" (the GoodNES "[a1]" dump), whose 1C differs in two operands: the frames per tick of the
+   game timer, 17 and 13 where the first has 20 and 17 (normal, fast). The program is the same apart
+   from those, so the hooks, the patches and the native code (which reads them from the ROM, see
+   recomp_fits_cart) fit both. */
 static const struct { const char *sha1; const char *name; } known_roms[] = {
     { "b21aa940728ed80c72ee23c251c96e42cc84b2d6", "VS. Super Mario Bros." },
+    { "91fa719b4b05adbac0b9d507d2051ed361d1ded4", "VS. Super Mario Bros. (faster timer)" },
     { NULL, NULL }
 };
 
-const char *cart_known_name(void) {
+static const char *known_name_of(const char *sha1_hex) {
     for (int i = 0; known_roms[i].sha1; i++)
-        if (strcmp(known_roms[i].sha1, cart.sha1_hex) == 0) return known_roms[i].name;
+        if (strcmp(known_roms[i].sha1, sha1_hex) == 0) return known_roms[i].name;
     return NULL;
+}
+
+const char *cart_known_name(void) { return known_name_of(cart.sha1_hex); }
+
+/* The native code fits the loaded dump: it is the dump the code was generated from, or one that differs
+   from it only in the operands the code reads from the ROM (symbols.txt "rom"), which recomp.py hashes
+   as zeros. */
+int recomp_fits_cart(void) {
+    if (!recomp_rom_sha1 || !cart.prg) return 0;
+    if (strcmp(recomp_rom_sha1, cart.sha1_hex) == 0) return 1;
+    if (!recomp_rom_sha1_masked || !recomp_rom_operands[0] || cart.prg_size != 0x8000) return 0;
+    size_t n = cart.prg_size + cart.chr_size;
+    uint8_t *img = malloc(n);
+    if (!img) return 0;
+    memcpy(img, cart.prg, cart.prg_size);
+    if (cart.chr_size) memcpy(img + cart.prg_size, cart.chr, cart.chr_size);
+    for (int i = 0; recomp_rom_operands[i]; i++) img[recomp_rom_operands[i] - 0x8000] = 0;
+    uint8_t sha[20];
+    char hex[41];
+    rom_sha1(img, n, sha);
+    free(img);
+    for (int i = 0; i < 20; i++) sprintf(hex + i * 2, "%02x", sha[i]);
+    return strcmp(hex, recomp_rom_sha1_masked) == 0;
+}
+
+/* an iNES image's PRG + CHR: where they start and how long they are together; 0 when it is no iNES
+   image or is shorter than its header says */
+static int ines_body(const uint8_t *h, size_t len, size_t *off, size_t *size) {
+    if (len < 16 || memcmp(h, "NES\x1a", 4) != 0) return 0;
+    size_t prg_units = h[4], chr_units = h[5];
+    if ((h[7] & 0x0C) == 0x08) {
+        prg_units |= (size_t)(h[9] & 0x0F) << 8;
+        chr_units |= (size_t)(h[9] & 0xF0) << 4;
+    }
+    *off = 16 + ((h[6] & 4) ? 512 : 0);
+    *size = prg_units * 16384 + chr_units * 8192;
+    return *size && *off + *size <= len;
+}
+
+/* romzip_pick's judge for a dump in a zip: a known one at once, else the first iNES file */
+static int judge_nes(const char *name, const uint8_t *d, size_t n, void *ctx) {
+    (void)name; (void)ctx;
+    size_t off, size;
+    if (!ines_body(d, n, &off, &size)) return 0;
+    uint8_t sha[20];
+    char hex[41];
+    rom_sha1(d + off, size, sha);
+    for (int i = 0; i < 20; i++) sprintf(hex + i * 2, "%02x", sha[i]);
+    return known_name_of(hex) ? 2 : 1;
+}
+
+/* the file name without its folder */
+static const char *path_base(const char *path) {
+    const char *b = path;
+    for (const char *p = path; *p; p++) if (*p == '/' || *p == '\\') b = p + 1;
+    return b;
+}
+
+/* s begins with prefix, ignoring ASCII case */
+static int starts_nocase(const char *s, const char *prefix) {
+    for (; *prefix; s++, prefix++) {
+        int a = (unsigned char)*s, b = (unsigned char)*prefix;
+        if (a >= 'A' && a <= 'Z') a += 32;
+        if (b >= 'A' && b <= 'Z') b += 32;
+        if (a != b) return 0;
+    }
+    return 1;
+}
+
+static uint8_t *read_whole(const char *path, size_t max, size_t *len) {
+    FILE *f = nes_fopen(path, "rb");
+    if (!f) return NULL;
+    fseek(f, 0, SEEK_END);
+    long n = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    uint8_t *d = (n > 0 && (size_t)n <= max) ? malloc((size_t)n) : NULL;
+    if (d && fread(d, 1, (size_t)n, f) != (size_t)n) { free(d); d = NULL; }
+    fclose(f);
+    if (d) *len = (size_t)n;
+    return d;
+}
+
+/* A zip: MAME's set (the one its name asks for: suprmrioa.zip the faster timer's), else the .nes dump in
+   it, else a split set's clone zip with its parent's chips from suprmrio.zip in the same folder. */
+static int unzip_dump(const char *path, const uint8_t *zip, size_t len, uint8_t **img, size_t *n) {
+    const char *base = path_base(path);
+    int set = starts_nocase(base, "suprmrioa") ? ROMZIP_SET_SUPRMRIOA : ROMZIP_SET_SUPRMRIO;
+    const uint8_t *zips[2] = { zip, NULL };
+    size_t lens[2] = { len, 0 };
+    if (romzip_vs_set(zips, lens, 1, set, img, n, NULL) == ROMZIP_OK) return ROMZIP_OK;
+    int rc = romzip_pick(zip, len, 16 + 16384, 0x100000 + 16 + 512, judge_nes, NULL, img, n);
+    if (rc == ROMZIP_OK || (starts_nocase(base, "suprmrio.zip") && !base[12])) return rc;
+    char parent[4096];
+    snprintf(parent, sizeof parent, "%.*ssuprmrio.zip", (int)(base - path), path);
+    size_t plen;
+    uint8_t *p = read_whole(parent, 64u << 20, &plen);
+    if (!p) return rc;
+    zips[1] = p;
+    lens[1] = plen;
+    int r2 = romzip_vs_set(zips, lens, 2, set, img, n, NULL);
+    free(p);
+    return r2 == ROMZIP_OK ? ROMZIP_OK : rc;
 }
 
 int cart_load(const char *path) {
@@ -135,22 +242,27 @@ int cart_load(const char *path) {
     fseek(f, 0, SEEK_END);
     long len = ftell(f);
     fseek(f, 0, SEEK_SET);
-    if (len < 16 + 16384) { fclose(f); fprintf(stderr, "cart: file too small\n"); return -1; }
+    if (len < 22) { fclose(f); fprintf(stderr, "cart: file too small\n"); return -1; }
     if (len > (64L << 20)) { fclose(f); fprintf(stderr, "cart: file too large\n"); return -1; }
     uint8_t *data = malloc((size_t)len);
     if (fread(data, 1, (size_t)len, f) != (size_t)len) { fclose(f); free(data); return -1; }
     fclose(f);
 
     if (romzip_is_zip(data, (size_t)len)) {
-        /* MAME's set: the chips put together into the image an iNES dump holds */
+        /* MAME's set (the chips put together into the image an iNES dump holds), or a zipped .nes dump */
         uint8_t *img;
         size_t n;
-        int rc = romzip_vs_set(data, (size_t)len, &img, &n);
+        int rc = unzip_dump(path, data, (size_t)len, &img, &n);
         free(data);
-        if (rc != ROMZIP_OK) { fprintf(stderr, "cart: %s is not MAME's VS. Super Mario Bros. set (suprmrio)\n", path); return -1; }
+        if (rc != ROMZIP_OK) {
+            fprintf(stderr, "cart: %s holds no .nes dump and no MAME VS. Super Mario Bros. set (suprmrio, suprmrioa)%s\n",
+                    path, rc == ROMZIP_UNREADABLE ? " this program can unpack (stored or deflated files only)" : "");
+            return -1;
+        }
         data = img;
         len = (long)n;
     }
+    if (len < 16 + 16384) { free(data); fprintf(stderr, "cart: file too small\n"); return -1; }
     if (memcmp(data, "NES\x1a", 4) != 0) { free(data); fprintf(stderr, "cart: not an iNES file\n"); return -1; }
     cart_free();
     memset(&cart, 0, sizeof cart);

@@ -76,7 +76,6 @@
 #define EDGE 8                         /* the sprite columns the game hides at each edge */
 #define FILL_W 256                     /* the page drawn before an area's start page */
 #define FILL_SOLID_W 128               /* the part of it next to the start page that also gets its collision */
-static const char vs_smb_sha1[] = "b21aa940728ed80c72ee23c251c96e42cc84b2d6";
 /* what tells one area from another: world, level, area number, area type and the offset of its data
    (not the area pointer, which the enemy data's pipe objects change to their destination during play) */
 static const uint16_t area_id_addr[5] = { 0x075F, 0x075C, 0x0760, 0x074E, 0x074F };
@@ -127,7 +126,8 @@ static void engine_hook(uint16_t pc) {
 }
 
 void widescreen_attach(void) {
-    if (cart.vs && strcmp(cart.sha1_hex, vs_smb_sha1) == 0) {
+    /* a known VS. Super Mario Bros. dump: they share the program these addresses are in (cart.c) */
+    if (cart.vs && cart_known_name()) {
         sys.hook = engine_hook;
         sys.hook_pc[0] = ENGINE_START;
         sys.hook_pc[1] = AREA_INIT;

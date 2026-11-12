@@ -337,8 +337,8 @@ int main(int argc, char **argv) {
 
     if (recomp) {
         if (!recomp_rom_sha1) { fprintf(stderr, "this build has no recompiled code\n"); return 1; }
-        if (strcmp(recomp_rom_sha1, cart.sha1_hex) != 0) {
-            fprintf(stderr, "recompiled code was generated from ROM %s but this ROM is %s\n", recomp_rom_sha1, cart.sha1_hex);
+        if (!recomp_fits_cart()) {
+            fprintf(stderr, "recompiled code was generated from ROM %s, which this ROM (%s) is not\n", recomp_rom_sha1, cart.sha1_hex);
             return 1;
         }
         sys.use_recomp = true;

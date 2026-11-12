@@ -41,6 +41,7 @@
 #include "gpu_sync.h"
 #include "widescreen.h"
 #include "allstars.h"
+#include "romzip.h"
 #include "rewind.h"
 #include "touchpad.h"
 #include "updater.h"
@@ -371,11 +372,11 @@ static int on_steam_deck(void) {
 #endif
 }
 
-/* names of the files in dir with one of the two extensions (3 letters, any case), up to max */
-static int list_files_ext(const char *dir, const char *const exts[2], char names[][512], int max) {
+/* names of the files in dir with one of the extensions (3 letters, any case; the list ends with NULL), up to max */
+static int list_files_ext(const char *dir, const char *const exts[], char names[][512], int max) {
     int n = 0;
 #ifdef _WIN32
-    for (int x = 0; x < 2 && n < max; x++) {
+    for (int x = 0; exts[x] && n < max; x++) {
         wchar_t pattern[1300];
         char pat8[1300];
         snprintf(pat8, sizeof pat8, "%s\\*.%s", dir, exts[x]);
@@ -395,9 +396,9 @@ static int list_files_ext(const char *dir, const char *const exts[2], char names
     struct dirent *e;
     while (n < max && (e = readdir(d)) != NULL) {
         size_t len = strlen(e->d_name);
-        if (len > 4 && len < 512 && e->d_name[len - 4] == '.' &&
-            (SDL_strcasecmp(e->d_name + len - 3, exts[0]) == 0 || SDL_strcasecmp(e->d_name + len - 3, exts[1]) == 0))
-            snprintf(names[n++], 512, "%s", e->d_name);
+        if (len <= 4 || len >= 512 || e->d_name[len - 4] != '.') continue;
+        for (int x = 0; exts[x]; x++)
+            if (SDL_strcasecmp(e->d_name + len - 3, exts[x]) == 0) { snprintf(names[n++], 512, "%s", e->d_name); break; }
     }
     closedir(d);
 #endif
@@ -406,7 +407,7 @@ static int list_files_ext(const char *dir, const char *const exts[2], char names
 
 /* names of the .nes and .zip files in dir (any case), up to max */
 static int list_rom_files(const char *dir, char names[][512], int max) {
-    static const char *const exts[2] = { "nes", "zip" };
+    static const char *const exts[] = { "nes", "zip", NULL };
     return list_files_ext(dir, exts, names, max);
 }
 
@@ -1453,12 +1454,12 @@ static int load_rom_file(const char *path) {
     if (!path || !*path) { snprintf(rom_status, sizeof rom_status, "No ROM selected"); refresh_rom_items(); return 0; }
     if (!file_exists(path)) { snprintf(rom_status, sizeof rom_status, "File not found"); refresh_rom_items(); return 0; }
     if (nes_load(path) != 0) {
-        snprintf(rom_status, sizeof rom_status, "Not a .nes file or MAME's suprmrio set");
+        snprintf(rom_status, sizeof rom_status, "Not a .nes file, a zip with one, or MAME's suprmrio set");
         refresh_rom_items();
         return 0;
     }
     const char *known = cart_known_name();
-    int native = recomp_rom_sha1 && strcmp(recomp_rom_sha1, cart.sha1_hex) == 0;
+    int native = recomp_fits_cart();
     snprintf(rom_hashes, sizeof rom_hashes, "SHA-1 %s  MD5 %s  CRC32 %08X", cart.sha1_hex, cart.md5_hex, cart.crc32);
     if (!known && !native) {
         snprintf(rom_status, sizeof rom_status, "Hash check FAILED: not a known VS. Super Mario Bros. dump (%s)", rom_hashes);
@@ -1855,10 +1856,10 @@ static int load_allstars_file(const char *path) {
     return 1;
 }
 
-/* none chosen (or the remembered one gone): an All-Stars ROM (.sfc or .smc) where the dump is looked for;
-   files that are not one are passed over quietly */
+/* none chosen (or the remembered one gone): an All-Stars ROM (.sfc or .smc, or a zip with one) where the dump
+   is looked for; files that are not one are passed over quietly */
 static int find_allstars_nearby(void) {
-    static const char *const exts[2] = { "sfc", "smc" };
+    static const char *const exts[] = { "sfc", "smc", "zip", NULL };
     char dirs[5][1200];
     int nd = nearby_dirs(dirs);
     static char names[32][512];
@@ -1877,14 +1878,25 @@ static int find_allstars_nearby(void) {
 }
 
 /* a file handed over by drag and drop or the Android document picker: All-Stars (an SNES ROM, a megabyte and
-   more) or the board's dump */
+   more, or a zip holding one) or the board's dump (a .nes file, a zip with one, MAME's set) */
 static int looks_like_snes_rom(const char *path) {
     FILE *f = nes_fopen(path, "rb");
     if (!f) return 0;
     fseek(f, 0, SEEK_END);
     long n = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    uint8_t *d = (n >= 22 && n <= (16L << 20)) ? malloc((size_t)n) : NULL;
+    if (d && fread(d, 1, (size_t)n, f) != (size_t)n) { free(d); d = NULL; }
     fclose(f);
-    return n >= 0x100000;
+    int snes = n >= 0x100000;
+    if (d && romzip_is_zip(d, (size_t)n)) {
+        size_t size;
+        snes = 0;
+        for (int i = 0; romzip_entry(d, (size_t)n, i, NULL, 0, &size); i++)
+            if (size >= 0x100000) { snes = 1; break; }
+    }
+    free(d);
+    return snes;
 }
 
 static void choose_allstars(void) {
@@ -2177,11 +2189,11 @@ static int trigger_selftest(void) {
 }
 
 static void usage(void) {
-    printf("usage: vssmb [rom.nes | suprmrio.zip] [--allstars FILE] [--play] [--selftest N out.png] [--ui-shot out.png [tab [frames]]]\n"
+    printf("usage: vssmb [rom.nes | rom.zip | suprmrio.zip] [--allstars FILE] [--play] [--selftest N out.png] [--ui-shot out.png [tab [frames]]]\n"
            "             [--game-shot out.png [frames] [--state-load state]] [--rewind-test N] [--reset-test N]\n"
            "             [--list-controllers [out.txt]] [--list-modes [out.txt]] [--chord-test] [--trigger-test] [--stats out.txt]\n"
            "             [--touch] [--touch-test] [--quit-after frames] [--update-check] [--update-test VERSION [args...]]\n"
-           "  --allstars FILE: your Super Mario All-Stars ROM (.sfc) for the remastered graphics and music.\n"
+           "  --allstars FILE: your Super Mario All-Stars ROM (.sfc, .smc, or a .zip with one) for the remastered graphics and music.\n"
            "  --reset-test N: Play > Reset game after N frames must be instant and restart the game.\n"
            "  --update-check: what the Updates tab's check finds. --update-test: the same as if this build were\n"
            "  VERSION, then installs the newest release over this program and starts it with args (scratch folders only)\n");

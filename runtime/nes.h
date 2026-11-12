@@ -289,6 +289,7 @@ void cart_free(void);
 int  cart_load_battery(const char *path);
 int  cart_save_battery(const char *path);
 const char *cart_known_name(void);   /* "VS. Super Mario Bros." etc. for known dumps, else NULL */
+int  recomp_fits_cart(void);          /* the native code (generated/) can run the loaded dump */
 size_t cart_battery_size(void);       /* bytes of battery RAM for the loaded cartridge */
 #include <stdio.h>
 FILE *nes_fopen(const char *path, const char *mode);  /* UTF-8 path aware fopen */
@@ -365,6 +366,10 @@ int     nes_state_load(const void *buf, size_t size);
 /* recompiled code entry (generated/ or stubs) */
 int     recomp_run(void);        /* run native code from cpu.pc; returns 0 if no native routine for cpu.pc */
 extern const char *recomp_rom_sha1; /* sha1 the native code was generated from, or NULL */
+/* the operands the native code reads from the loaded ROM (they differ between the known dumps), 0-ended,
+   and the sha1 of the dump it was generated from with those bytes zeroed (NULL when there are none) */
+extern const uint16_t recomp_rom_operands[];
+extern const char *recomp_rom_sha1_masked;
 
 /* ------------------------------------------------------------------ */
 /* Inline memory access                                                */

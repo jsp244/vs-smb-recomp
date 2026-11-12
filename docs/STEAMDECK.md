@@ -6,17 +6,18 @@ view (during play the level the game keeps beyond the screen's edges fills the s
 with the enemies in it, and Mario can walk left into it to the edge of the screen:
 16 pixels in this view, 42 with Integer scaling on the Graphics tab),
 and the menus are driven with the Deck's controls. It contains no game data: you need
-your own dump of the VS. Super Mario Bros. board (a .nes file, or MAME's suprmrio.zip).
+your own dump of the VS. Super Mario Bros. board (a .nes file, a .zip with one, or MAME's
+suprmrio.zip).
 
 Install (Desktop Mode)
 ----------------------
 1. Extract this folder somewhere in your home folder, for example
    ~/Games/VSSuperMarioBros.
-2. Copy your dump (the .nes file or suprmrio.zip) into that same folder. The program
-   finds it there by itself the first time (it checks the file's hash and remembers it).
-   For the remastered graphics, copy your Super Mario All-Stars ROM (SNES, USA: the
-   .sfc file) there too; it is found and checked the same way, and Graphics > Graphics
-   switches between Arcade and All-Stars.
+2. Copy your dump (the .nes file, a .zip with it, or suprmrio.zip) into that same folder.
+   The program finds it there by itself the first time (it checks the file's hash and
+   remembers it). For the remastered graphics, copy your Super Mario All-Stars ROM (SNES,
+   USA: the .sfc file, or a .zip with it) there too; it is found and checked the same
+   way, and Graphics > Graphics switches between Arcade and All-Stars.
 3. Open Konsole in that folder (Dolphin: right-click > Open Terminal Here) and run
    `python3 add-to-steam.py`. It closes Steam, adds VS. Super Mario Bros. as a non-Steam
    game with its library artwork from SteamGridDB (portrait and wide capsules, hero,

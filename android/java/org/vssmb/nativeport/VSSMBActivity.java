@@ -141,8 +141,8 @@ public class VSSMBActivity extends SDLActivity {
         }, "rom-copy").start();
     }
 
-    /** Copies the chosen document (.nes, or MAME's .zip) into the app's own storage, keeping its
-        name (saves are named after it). */
+    /** Copies the chosen document (a .nes or .sfc file, a .zip with one, or MAME's .zip) into the
+        app's own storage, keeping its name (saves are named after it). */
     private String copyToAppStorage(Uri uri) {
         String name = "VS Super Mario Bros.nes";
         Cursor c = null;

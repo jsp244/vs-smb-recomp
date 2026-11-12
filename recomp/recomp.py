@@ -162,7 +162,7 @@ class Unit:
 
 
 class Recompiler:
-    def __init__(self, prg, prg_mode, max_routine, symbols, flat=False, hooks=(), patches=()):
+    def __init__(self, prg, prg_mode, max_routine, symbols, flat=False, hooks=(), patches=(), rom_operands=()):
         self.prg = prg
         self.flat = flat
         self.nbanks = 1 if flat else len(prg) // 0x2000
@@ -171,6 +171,7 @@ class Recompiler:
         self.symbols = symbols
         self.hooks = set(hooks)    # instructions the runtime looks at before they run (HOOK in recomp_rt.h)
         self.patches = set(patches)  # and those it may change the machine before (PATCH)
+        self.rom_operands = set(rom_operands)  # immediates read from the loaded ROM (ROM_OPERAND)
         self.units = {}            # (bank, base) -> Unit
         self.ext_refs = collections.defaultdict(set)  # slot base -> set of target addrs (swappable slots)
         self.ext_pending = collections.defaultdict(set)
@@ -382,6 +383,8 @@ class Recompiler:
     def read_expr(self, ins):
         v, m = ins.operand, ins.mode
         if m == "imm":
+            if ins.addr in self.rom_operands:
+                return f"ROM_OPERAND(0x{(ins.addr + 1) & 0xFFFF:04X})"
             return f"0x{v:02X}"
         if m == "zp":
             return f"ram[0x{v:02X}]"
@@ -587,8 +590,14 @@ class Recompiler:
             f.write("\n".join(lines) + "\n")
         return func_names
 
-    def emit_main(self, outdir, sha1):
-        lines = ['#include "recomp_rt.h"', "", f'const char *recomp_rom_sha1 = "{sha1}";', ""]
+    def emit_main(self, outdir, sha1, sha1_masked=None):
+        lines = ['#include "recomp_rt.h"', "", f'const char *recomp_rom_sha1 = "{sha1}";']
+        ops = sorted((a + 1) & 0xFFFF for a in self.rom_operands)
+        lines.append("const uint16_t recomp_rom_operands[] = { "
+                     + "".join(f"0x{a:04X}, " for a in ops) + "0 };")
+        lines.append(f'const char *recomp_rom_sha1_masked = "{sha1_masked}";' if sha1_masked
+                     else "const char *recomp_rom_sha1_masked = NULL;")
+        lines.append("")
         for u in self.units.values():
             lines.append(f"extern const recomp_unit_t unit_{u.name};")
         lines.append("")
@@ -718,10 +727,11 @@ def mame_set_image(path):
 
 
 def load_symbols(path):
-    """ADDR name [hook] [patch] lines -> ({addr: name}, {addrs marked hook}, {addrs marked patch})"""
-    syms, hooks, patches = {}, set(), set()
+    """ADDR name [hook] [patch] [rom] lines -> ({addr: name}, {addrs marked hook}, {addrs marked patch},
+    {addrs marked rom})"""
+    syms, hooks, patches, roms = {}, set(), set(), set()
     if not path or not os.path.exists(path):
-        return syms, hooks, patches
+        return syms, hooks, patches, roms
     for line in open(path):
         line = line.split(";")[0].strip()
         if not line:
@@ -733,7 +743,9 @@ def load_symbols(path):
                 hooks.add(int(parts[0], 16))
             if "patch" in parts[2:]:
                 patches.add(int(parts[0], 16))
-    return syms, hooks, patches
+            if "rom" in parts[2:]:
+                roms.add(int(parts[0], 16))
+    return syms, hooks, patches, roms
 
 
 def main():
@@ -782,11 +794,25 @@ def main():
     else:
         prg_mode = int(args.prg_mode)
 
-    symbols, hooks, patches = load_symbols(args.symbols)
-    rc = Recompiler(prg, prg_mode, args.max_routine, symbols, flat, hooks, patches)
+    symbols, hooks, patches, rom_operands = load_symbols(args.symbols)
+    if rom_operands and not flat:
+        raise SystemExit("operands read from the ROM (symbols marked rom) need the flat layout")
+    rc = Recompiler(prg, prg_mode, args.max_routine, symbols, flat, hooks, patches, rom_operands)
     fixed, swappable = rc.fixed_layout()
     bank_bases = {} if flat else infer_bases(prg, nbanks, set(fixed.values()), swappable, coverage)
     rc.analyse(coverage, bank_bases)
+    # each one marked rom: an instruction with an immediate operand; the dump hashed with those operands
+    # zeroed (cart.c recomp_fits_cart: dumps that differ only there run the same native code)
+    sha1_masked = None
+    if rom_operands:
+        found = {a: ins for u in rc.units.values() for a, ins in u.insns.items() if a in rom_operands}
+        for a in sorted(rom_operands):
+            if a not in found or found[a].mode != "imm":
+                raise SystemExit(f"${a:04X} is marked rom but is no instruction with an immediate operand")
+        masked = bytearray(data[off:off + prg_size + chr_units * 8192])
+        for a in rom_operands:
+            masked[(a + 1 - 0x8000) & 0x7FFF] = 0
+        sha1_masked = hashlib.sha1(masked).hexdigest()
 
     os.makedirs(args.out, exist_ok=True)
     for f in os.listdir(args.out):
@@ -805,7 +831,7 @@ def main():
         biggest = max(len(c) for c in u.comps)
         print(f"  {u.name}: {len(u.insns):5d} instructions, {len(funcs):4d} routines (largest {biggest})")
     rc.units = {k: v for k, v in rc.units.items() if v.insns}
-    rc.emit_main(args.out, sha1)
+    rc.emit_main(args.out, sha1, sha1_masked)
     with open(os.path.join(args.out, ".gitignore"), "w", newline="\n") as f:
         f.write("*\n!.gitignore\n")
     layout = "flat 32 KiB" if flat else f"PRG mode {prg_mode}"

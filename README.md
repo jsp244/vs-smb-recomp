@@ -28,10 +28,14 @@ launcher in the style of the N64 recompilation projects: a tabbed menu
 (**Play / Graphics / Audio / Controls / Cabinet / ROM / Updates**) over the game's own title
 screen and demo, running with sound behind it. On the ROM tab "Choose ROM file..."
 opens the system file dialog; dropping the file onto the window or passing it on the
-command line also works. Both an iNES `.nes` file and **MAME's `suprmrio.zip` set**
-are accepted: the six chips are found in the zip by their CRC32 and put together in
-memory. The hash is checked and anything that is not a known VS. Super Mario Bros.
-dump is refused.
+command line also works. An iNES `.nes` file (on its own or in a `.zip`) and **MAME's
+`suprmrio.zip` set** are accepted: the six chips are found in the zip by their CRC32
+and put together in memory (merged and split sets work too). The hash is checked and
+anything that is not a known VS. Super Mario Bros. dump is refused. Two are known: the
+usual one and MAME's `suprmrioa` (the "[a1]" dump), whose timer runs faster: it ticks
+every 17 frames instead of 20 (13 instead of 17 with the fast-timer switch). Those two
+operands are the only difference between them, so the generated code reads just those
+from the dump and runs either natively.
 
 **The cabinet.** VS. Super Mario Bros. is a coin-op: it has a coin slot, 1P and 2P
 start buttons and DIP switches on the board. The **Cabinet** tab sets the switches
@@ -53,7 +57,7 @@ to the NES console's composite palette instead.
 **Remastered graphics (Super Mario All-Stars).** With your own *Super Mario All-Stars*
 ROM (SNES, USA; also the Wii and Switch Online copies of it) the game can be shown with
 the graphics of All-Stars' Super Mario Bros.: on the ROM tab "Choose All-Stars ROM..."
-(or drop the `.sfc` onto the window, or `--allstars FILE`), then **Graphics > Graphics:
+(or drop the `.sfc`, or a `.zip` with it, onto the window, or `--allstars FILE`), then **Graphics > Graphics:
 Arcade / All-Stars**. The ROM is hash-checked and remembered; nothing from it is stored
 anywhere but in memory. The picture is drawn by All-Stars' own code, running in a small
 SNES sandbox: its start-up, its InitializeArea and area graphics setup, and its area
@@ -474,7 +478,10 @@ Save states go to `saves/<rom name>.state1` .. `.state9`.
   jump-table dispatcher (`JumpEngine` in `recomp/symbols.txt`), optionally seeded with
   execution coverage from the headless harness. Every 6502 instruction becomes a
   `case` label, so execution can resume at any instruction after an interrupt or an
-  indirect jump.
+  indirect jump. Immediate operands are constants in the C code, except the two
+  marked `rom` in `symbols.txt` (the timer's tick, the one difference between the two
+  known dumps), which are read from the loaded dump; a dump that matches the one the
+  code came from apart from those runs the same native code.
 * `runtime/` is the hardware: a dot-accurate PPU (sprite 0 hit drives the status-bar
   split), a cycle-stepped APU with the NES mixer and output filters, the Vs. System
   board (mapper 99: CHR bank from `$4016` bit 2, 2 KiB of work RAM at `$6000`, coin
