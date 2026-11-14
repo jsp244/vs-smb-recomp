@@ -3705,6 +3705,15 @@ static int render_text_screen(uint32_t *out, int stride, int x, int y, int w, in
     return 1;
 }
 
+/* the picture's sprites as last drawn, for allstars_debug_sprites */
+static snes_sprite_t dbg_spr[128 + 64];
+static int dbg_nspr;
+
+void allstars_debug_sprites(FILE *f, int frame) {
+    for (int i = 0; i < dbg_nspr; i++)
+        fprintf(f, "%d %d %d %03X %02X %d\n", frame, dbg_spr[i].x, dbg_spr[i].y, dbg_spr[i].tile, dbg_spr[i].attr, dbg_spr[i].large);
+}
+
 int allstars_render(uint32_t *out, int stride, int x, int y, int w, int h) {
     if (!allstars_enabled || !as.rom) return 0;
     forget_left_behind();
@@ -3791,6 +3800,7 @@ int allstars_render(uint32_t *out, int stride, int x, int y, int w, int h) {
         if (n > room) n = room;
         memcpy(lists[1] + counts[1], p.spr, sizeof(snes_sprite_t) * (size_t)n); counts[1] += n;
     }
+    memcpy(dbg_spr, lists[1], sizeof(snes_sprite_t) * (size_t)counts[1]); dbg_nspr = counts[1];
     /* each part replays the frame's registers from its first line */
     static uint8_t regs[offsetof(snesppu_t, spr) - offsetof(snesppu_t, inidisp)];
     static uint16_t cgram[256];

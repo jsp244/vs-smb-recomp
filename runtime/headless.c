@@ -245,6 +245,8 @@ static void usage(void) {
         "  --allstars-wide FILE the same with the widescreen canvas (512x240)\n"
         "  --allstars-dump PREFIX at the end, the SNES sandboxes as files (work RAM, VRAM, CGRAM, OAM,\n"
         "                      registers, the parsed columns; PREFIX-screen.* for the screens')\n"
+        "  --allstars-sprites FILE with --allstars-png: the sprites of each remastered picture written, one\n"
+        "                      line each (frame x y tile attribute large)\n"
         "  --wav FILE          write audio to a 48 kHz WAV\n"
         "  --allstars-music    with --allstars: All-Stars' music in it, the arcade's sound effects kept\n"
         "  --trace FILE        write a per-instruction trace (interpreter)\n"
@@ -260,7 +262,8 @@ static void usage(void) {
 
 int main(int argc, char **argv) {
     const char *rom = NULL, *png = NULL, *wav = NULL, *trace = NULL, *cov = NULL, *hash = NULL, *sav = NULL, *input = NULL, *debug_log = NULL, *ram_dump = NULL, *pal_out = NULL, *wide = NULL;
-    const char *state_save = NULL, *state_load = NULL, *as_rom = NULL, *as_png = NULL, *as_wide = NULL, *as_dump = NULL;
+    const char *state_save = NULL, *state_load = NULL, *as_rom = NULL, *as_png = NULL, *as_wide = NULL, *as_dump = NULL, *as_spr = NULL;
+    FILE *as_spr_f = NULL;
     int frames = 600, png_every = 0, ram_dump_every = 0, nestest = 0, blargg = 0, recomp = 0, quiet = 0, trace_start = 0, dip = 0;
     int oam_check = 0, oam_same = 0, oam_differ = 0, oam_none = 0, first_differ = -1;
     double oam_seconds = 0;
@@ -280,6 +283,7 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i], "--allstars-png") && i + 1 < argc) as_png = argv[++i];
         else if (!strcmp(argv[i], "--allstars-wide") && i + 1 < argc) as_wide = argv[++i];
         else if (!strcmp(argv[i], "--allstars-dump") && i + 1 < argc) as_dump = argv[++i];
+        else if (!strcmp(argv[i], "--allstars-sprites") && i + 1 < argc) as_spr = argv[++i];
         else if (!strcmp(argv[i], "--allstars-music")) allstars_music_enabled = true;
         else if (!strcmp(argv[i], "--dip") && i + 1 < argc) dip = (int)strtol(argv[++i], NULL, 16);
         else if (!strcmp(argv[i], "--poke") && i + 1 < argc) parse_pokes(argv[++i]);
@@ -333,6 +337,7 @@ int main(int argc, char **argv) {
         if (allstars_load(as_rom, err, sizeof err) != 0) { fprintf(stderr, "All-Stars ROM %s: %s\n", as_rom, err); return 1; }
         if (!quiet) printf("All-Stars ROM: %s (%s)\n", allstars_name(), allstars_sha1());
     }
+    if (as_spr && !(as_spr_f = fopen(as_spr, "w"))) { fprintf(stderr, "cannot write %s\n", as_spr); return 1; }
     if (wide || oam_check || widescreen_walk || as_rom) widescreen_attach();
 
     if (recomp) {
@@ -439,6 +444,7 @@ int main(int argc, char **argv) {
             if (as_png && allstars_to_rgb(rgb, 0)) {
                 snprintf(name, sizeof name, "%s.%05d.png", as_png, frame);
                 png_write_rgb(name, 256, 240, rgb);
+                if (as_spr_f) allstars_debug_sprites(as_spr_f, frame);
             }
             if (as_wide && allstars_to_rgb(rgb_wide, 1)) {
                 snprintf(name, sizeof name, "%s.%05d.png", as_wide, frame);
@@ -475,6 +481,7 @@ int main(int argc, char **argv) {
     if (as_png && !png_every) { if (allstars_to_rgb(rgb, 0)) png_write_rgb(as_png, 256, 240, rgb); else printf("allstars: the last frame was not drawn remastered\n"); }
     if (as_wide && !png_every) { if (allstars_to_rgb(rgb_wide, 1)) png_write_rgb(as_wide, WS_W, WS_H, rgb_wide); }
     if (as_dump) allstars_debug_dump(as_dump);
+    if (as_spr_f) fclose(as_spr_f);
     if (wide) {
         /* the centre of the canvas must be the normal frame, pixel for pixel, except in the 8-pixel columns
            at its edges, where the sprite columns the game hides are drawn back */

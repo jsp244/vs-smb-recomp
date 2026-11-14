@@ -17,6 +17,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdio.h>
 
 /* Loads and checks an All-Stars ROM (.sfc/.smc, with or without a copier header). Returns 0 when it
    is a version this program knows, else -1 with the reason in err. */
@@ -62,5 +63,7 @@ void allstars_hook(uint16_t pc);
    caller then shows the original picture. */
 int  allstars_render(uint32_t *out, int stride, int x, int y, int w, int h);
 void allstars_debug_dump(const char *prefix);   /* the sandbox SNES as files (for tools) */
+/* the sprites of the last picture drawn, one line each to f: frame, x, y, tile, attribute, large (for tools) */
+void allstars_debug_sprites(FILE *f, int frame);
 
 #endif
