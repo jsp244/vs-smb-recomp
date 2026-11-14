@@ -1244,6 +1244,13 @@ static void build_area(const uint8_t *r) {
     w[0xFA] = (uint8_t)((AREA_DATA_COPY + 2) & 0xFF);
     w[0xFB] = (uint8_t)(((AREA_DATA_COPY + 2) >> 8) & 0xFF);
     w[0xFC] = (uint8_t)((AREA_DATA_COPY + 2) >> 16);
+    /* The area graphics end with $04:95E2: for the pipe intro before 1-2, 2-2, 4-2 and 7-2 (All-Stars'
+       area $0C) it saves $0C in $0E65 and points $DB, the area index the tiles, colours and scenery
+       come from, at the area the pipe leads to; the next call puts $0C back. In the game the
+       intermission makes the first call, so the intro's own setup only puts $0C back. The sandbox
+       skips the intermission: without what it leaves, the intro got the underground's or the
+       water's look. */
+    if (w[0xDB] == 0x0C) w[0x0E65] = 0x0C;
     sb_call(sb, AREA_GRAPHICS, 0, 4000000);
     sb_call(sb, AREA_COLORS, 0, 100000);
     /* layer 2's pattern: the pages the setup filled ($7E2000 + page * $800; 8 for the hills), repeated
@@ -3034,6 +3041,10 @@ static void build_sprites(snesppu_t *p, const uint8_t *r, int ahead, int screen,
             } else {
                 s->tile = moved ? moved : tile;
                 sp = id == 0x2E ? powerup_pal(r) : enemy_pal[id][pal];
+                /* All-Stars' own addition at the end of its enemy drawing ($03:F297): a piranha plant's
+                   last two sprites, its leaves, take palette 4 (the head keeps the type's 5), whatever
+                   flips came before */
+                if (id == 0x0D && place >= 4) sp = 4;
             }
         } else if (owner[i] == OWN_BLOCK && tile >= 0x85 && tile <= 0x87) {
             /* a bouncing block ($03:F358): one 16x16 sprite at the first one's place, the used block or
