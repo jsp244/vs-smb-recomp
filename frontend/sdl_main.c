@@ -2201,8 +2201,11 @@ static void usage(void) {
            "             [--touch] [--touch-test] [--quit-after frames] [--update-check] [--update-test VERSION [args...]]\n"
            "  --allstars FILE: your Super Mario All-Stars ROM (.sfc, .smc, or a .zip with one) for the remastered graphics and music.\n"
            "  --reset-test N: Play > Reset game after N frames must be instant and restart the game.\n"
+           "             [--launcher | --no-launcher]\n"
            "  --update-check: what the Updates tab's check finds. --update-test: the same as if this build were\n"
-           "  VERSION, then installs the newest release over this program and starts it with args (scratch folders only)\n");
+           "  VERSION, then installs the newest release over this program and starts it with args (scratch folders only)\n"
+           "  --launcher / --no-launcher: open this menu / go straight into the game (the RetComM launcher's options);\n"
+           "  with no ROM given, a rom.cfg beside the program can name one\n");
 }
 
 static uint64_t fb_hash(void) {
@@ -2329,6 +2332,26 @@ static int reset_selftest(int frames) {
     return failures ? 1 : 0;
 }
 
+/* The RetComM launcher names the ROM it matched in rom.cfg beside the program: one line, a path (relative
+   ones count from the program's folder). 1 when one was read into path. */
+static int launcher_rom_cfg(char *path, size_t size) {
+    char file[1200], line[2048];
+    snprintf(file, sizeof file, "%srom.cfg", base_dir);
+    FILE *f = nes_fopen(file, "r");
+    if (!f) return 0;
+    int got = fgets(line, sizeof line, f) != NULL;
+    fclose(f);
+    if (!got) return 0;
+    char *s = line, *e;
+    while (*s == ' ' || *s == '\t' || *s == '"') s++;
+    e = s + strlen(s);
+    while (e > s && (e[-1] == '\r' || e[-1] == '\n' || e[-1] == ' ' || e[-1] == '\t' || e[-1] == '"')) *--e = 0;
+    if (!*s) return 0;
+    if (s[0] == '/' || s[0] == '\\' || s[1] == ':') snprintf(path, size, "%s", s);
+    else snprintf(path, size, "%s%s", base_dir, s);
+    return 1;
+}
+
 int main(int argc, char **argv) {
 #ifdef _WIN32
     attach_parent_console();
@@ -2409,6 +2432,13 @@ int main(int argc, char **argv) {
             update_test = 1;
             break;
         }
+        /* the RetComM launcher's options: --launcher opens this menu (as it opens anyway), --no-launcher
+           goes straight into the game like --play, and --save-path / --bios name files this game has no
+           use for. Any other option this build does not know is skipped, not taken for the ROM. */
+        else if (!strcmp(argv[i], "--launcher")) continue;
+        else if (!strcmp(argv[i], "--no-launcher")) autoplay = 1;
+        else if ((!strcmp(argv[i], "--save-path") || !strcmp(argv[i], "--bios")) && i + 1 < argc) i++;
+        else if (argv[i][0] == '-' && argv[i][1] == '-') fprintf(stderr, "ignoring the unknown option %s\n", argv[i]);
         else rom_arg = argv[i];
     }
     updater_set_touch(touch_flag);
@@ -2523,11 +2553,11 @@ int main(int argc, char **argv) {
     build_menu();
     update_title();
 
-    /* ---- ROM: command line, else the remembered path ---- */
+    /* ---- ROM: command line, else the one the RetComM launcher names in rom.cfg, else the remembered path ---- */
     {
         char path[2048] = "";
         if (rom_arg) snprintf(path, sizeof path, "%s", rom_arg);
-        else if (cfg.rom[0]) snprintf(path, sizeof path, "%s", cfg.rom);
+        else if (!launcher_rom_cfg(path, sizeof path) && cfg.rom[0]) snprintf(path, sizeof path, "%s", cfg.rom);
         if (path[0]) load_rom_file(path);
         if (!rom_ok && !rom_arg && !find_rom_nearby() && !path[0]) {
             snprintf(rom_status, sizeof rom_status, "No ROM selected");

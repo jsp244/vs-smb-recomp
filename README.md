@@ -28,7 +28,8 @@ launcher in the style of the N64 recompilation projects: a tabbed menu
 (**Play / Graphics / Audio / Controls / Cabinet / ROM / Updates**) over the game's own title
 screen and demo, running with sound behind it. On the ROM tab "Choose ROM file..."
 opens the system file dialog; dropping the file onto the window or passing it on the
-command line also works. An iNES `.nes` file (on its own or in a `.zip`) and **MAME's
+command line also works, and so does the RetComM launcher, which names the file in a
+`rom.cfg` beside the program. An iNES `.nes` file (on its own or in a `.zip`) and **MAME's
 `suprmrio.zip` set** are accepted: the six chips are found in the zip by their CRC32
 and put together in memory (merged and split sets work too). The hash is checked and
 anything that is not a known VS. Super Mario Bros. dump is refused. Two are known: the
