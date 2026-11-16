@@ -1,5 +1,7 @@
 # VS. Super Mario Bros. native PC port (static recompilation)
 
+▶ **Video:** https://youtu.be/xrQsZQ4zaHs
+
 A native Windows, Linux, Steam Deck and Android build of Nintendo's arcade *VS. Super
 Mario Bros.* (Vs. System, 1986), produced by **statically recompiling your own dump of
 the board** into C and linking it against a small hardware runtime (PPU with the
