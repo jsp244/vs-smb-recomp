@@ -44,6 +44,18 @@ public class VSSMBActivity extends SDLActivity {
         preferNesRefreshRate();
     }
 
+    /* Android keeps the process, and libmain.so with it, after the activity ends, and the next start
+       runs SDL_main again in it. The game keeps its state in static variables, so that run began on
+       the last one's: the main loop's flag still said quit and the updater's lock was still held, so
+       the game stayed on a black screen, on every start until the system ended the process.
+       SDLActivity.onDestroy waits for SDL_main to return (saves and settings are written by then),
+       so end the process here: every start begins fresh. */
+    @Override
+    protected void onDestroy() {
+        super.onDestroy();
+        System.exit(0);
+    }
+
     @Override
     protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
