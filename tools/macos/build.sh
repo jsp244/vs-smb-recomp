@@ -46,9 +46,10 @@ if [ -n "$ROM" ]; then
     python3 tests/cosim.py --frames 3000
     python3 tests/cosim.py --frames 3000 --reset 2000
     python3 tests/cosim.py --walk 42
-    echo "== self-tests with SDL's offscreen video, software renderer and dummy audio drivers"
+    echo "== self-tests without a display: SDL's dummy video and audio drivers, its software renderer"
     (
-        export SDL_VIDEODRIVER=offscreen SDL_RENDER_DRIVER=software SDL_AUDIODRIVER=dummy   # (no OpenGL offscreen on a Mac)
+        # (not the offscreen driver: on a Mac SDL gives every window OpenGL, which offscreen has no library for)
+        export SDL_VIDEODRIVER=dummy SDL_RENDER_DRIVER=software SDL_AUDIODRIVER=dummy
         B=./build-mac/vssmb
         $B "$ROM" --selftest 300 shots/selftest.png | grep selftest
         $B --trigger-test | tail -n 1
