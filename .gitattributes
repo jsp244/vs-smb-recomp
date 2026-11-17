@@ -11,9 +11,13 @@ Dockerfile text eol=lf
 CMakeLists.txt text eol=lf
 *.java text eol=lf
 *.xml text eol=lf
+*.m text eol=lf
+*.plist text eol=lf
+*.yml text eol=lf
 *.nes binary
 *.sav binary
 *.state binary
 *.png binary
 *.zip binary
 *.ico binary
+*.icns binary

@@ -8,13 +8,27 @@ The program checks the hash and refuses anything else.
 
 Getting started
 ---------------
-1. Run vssmb.exe (Windows) or vssmb (Linux).
+1. Run vssmb.exe (Windows) or vssmb (Linux), or open the app (macOS, see below).
 2. On the ROM tab choose "Choose ROM file..." and pick your .nes or .zip file, or
    drop the file onto the window, or start the program with the file as an argument.
 3. Go to Play > Start game. The chosen file is remembered in vssmb.ini.
 4. The cabinet starts on its "PUSH BUTTON" screen: press Start for one player
    (or 2 for two players). With coins switched on (Cabinet tab), press Insert
    coin (Right Shift / the pad's Back button) first.
+
+On a Mac
+--------
+It runs on macOS 11 or newer, on Apple silicon and Intel Macs.
+1. Move "VS. Super Mario Bros." from the unzipped folder to your Applications folder
+   (or any other folder: an app opened straight from Downloads cannot update itself).
+2. The first time you open it, macOS says it cannot check the app for malware, as it
+   is not signed through Apple's developer program. Close that message, open System
+   Settings > Privacy & Security, scroll down and choose "Open Anyway" beside the
+   app's name. This is needed once.
+3. Choose your ROM on the ROM tab, drop it onto the window or onto the app's icon,
+   or put it in the folder the app is in.
+Keys that differ: Option+Return switches fullscreen, Cmd+R resets, and on a laptop
+keyboard the F keys (save states, screenshots) need the fn key.
 
 Remastered graphics (optional)
 ------------------------------
@@ -122,7 +136,8 @@ SHA-256 checksums published with the release and puts the new program in place o
 this one, with its README.txt (this file) in place of the old one. Your settings, saves
 and ROM stay as they are, and the previous version is kept beside it as vssmb.exe.old
 (vssmb.old on Linux, where the drive allows it): to go back, delete vssmb.exe and
-rename the .old file. Restart now starts the new version at once (a game in progress
+rename the .old file. On a Mac the whole app is replaced and the previous one goes to
+the Trash. Restart now starts the new version at once (a game in progress
 ends); otherwise it starts the next time you open the game. Nothing is installed until
 you press Update now. The program's folder has to be writable for this; if it is not
 (Program Files, for example), download the new version from the release page.
@@ -137,7 +152,8 @@ vssmb.exe.old              the previous version, after an update (vssmb.old on L
 These live next to the program when that folder is writable. If it is not (Program
 Files, a read-only location, or the program was started from inside the zip),
 they go to %APPDATA%\VSSMBPort\VSSuperMarioBros\ instead (on Linux
-~/.local/share/VSSMBPort/VSSuperMarioBros/).
+~/.local/share/VSSMBPort/VSSuperMarioBros/). The Mac app always keeps them in
+~/Library/Application Support/VSSMBPort/VSSuperMarioBros/.
 
 The ROM tab shows the SHA-1, MD5 and CRC32 of your dump and whether it matches a
 known VS. Super Mario Bros. dump: the usual one (MAME's suprmrio set gives the same

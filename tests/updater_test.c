@@ -4,18 +4,37 @@
  * addresses count as the release's own downloads, taking the program out of packages made the
  * way `make dist` makes them, and whole checks and installations against a stand-in GitHub
  * (the HTTP calls are stubs serving a release made up here: nothing goes online), including
- * every reason to refuse a download.
+ * every reason to refuse a download. On macOS the program is a stand-in app, and the Trash a
+ * folder of the test's own.
  * Build and run: tests/run_updater_test.sh
  */
 #define SDL_MAIN_HANDLED
 #define VSSMB_REPO "owner/vs-smb-recomp"
 #define VSSMB_VERSION "v1.1.0"
-#ifdef _WIN32
+#if defined(_WIN32)
 #  define VSSMB_PACKAGE "vssmb-win64.zip"
+#elif defined(__APPLE__)
+#  define VSSMB_PACKAGE "vssmb-macos.zip"
 #else
 #  define VSSMB_PACKAGE "vssmb-linux-x86_64.tar.gz"
 #endif
 #include "../frontend/updater.c"
+
+#ifdef __APPLE__
+#include <dirent.h>
+
+/* the Trash (macos.m is not part of this test): a folder beside the stand-in app; trash_refuses
+   plays a volume without one */
+static char trash_dir[1100];
+static int trash_refuses;
+int macos_trash(const char *path) {
+    char to[1300];
+    if (trash_refuses) return 0;
+    snprintf(to, sizeof to, "%s/%s", trash_dir, name_in(path));
+    remove_tree(to);
+    return rename(path, to) == 0;
+}
+#endif
 
 /* the stand-in GitHub: the release's JSON, the package and SHA256SUMS at their addresses */
 #define RELEASE "https://github.com/owner/vs-smb-recomp/releases/download/v1.2.0/"
@@ -122,9 +141,25 @@ static int text_is(const char *path, const char *text) {
 }
 
 /* the stand-in program before each case: "old version", with no backup beside it, and the old
-   version's notes; nothing else of the package's in the folder */
+   version's notes; nothing else of the package's in the folder (on macOS: an app holding that
+   program and an old Info.plist, nothing beside it, an empty Trash) */
 static void reset_program(const char *exe) {
     char p[1300];
+#ifdef __APPLE__
+    char app[1100];
+    app_of(exe, app, sizeof app);
+    remove_tree(app);
+    snprintf(p, sizeof p, "%s.old", app);
+    remove_tree(p);
+    snprintf(p, sizeof p, "%s.new", app);
+    remove_tree(p);
+    snprintf(p, sizeof p, "%s/Contents/MacOS", app);
+    make_dirs(p);
+    snprintf(p, sizeof p, "%s/Contents/Info.plist", app);
+    put_text(p, "old plist\n");
+    remove_tree(trash_dir);
+    mkdir(trash_dir, 0755);
+#endif
     FILE *f = fopen(exe, "wb");
     if (f) { fputs("old version", f); fclose(f); }
     snprintf(p, sizeof p, "%s.old", exe);
@@ -167,6 +202,43 @@ static int program_is(const char *exe, const char *ref) {
     return same;
 }
 
+#ifdef __APPLE__
+static int trash_empty(void) {
+    DIR *d = opendir(trash_dir);
+    struct dirent *e;
+    int empty = 1;
+    while (d && (e = readdir(d)) != NULL) if (strcmp(e->d_name, ".") && strcmp(e->d_name, "..")) empty = 0;
+    if (d) closedir(d);
+    return empty;
+}
+
+/* the app is the package's: its program and its Info.plist and icon, no <app>.new beside it */
+static int no_leftover(const char *exe) {
+    char app[1100], p[1300];
+    app_of(exe, app, sizeof app);
+    snprintf(p, sizeof p, "%s.new", app);
+    return !f_exists(p);
+}
+
+/* the previous app went to the Trash whole, with its program and Info.plist, and nothing is left beside the new one */
+static int backup_is_old(const char *exe) {
+    char app[1100], p[1300], q[1300];
+    app_of(exe, app, sizeof app);
+    snprintf(p, sizeof p, "%s/%s.old/Contents/MacOS/" BINARY, trash_dir, name_in(app));
+    snprintf(q, sizeof q, "%s/%s.old/Contents/Info.plist", trash_dir, name_in(app));
+    int in_trash = same_as_file((const uint8_t *)"old version", 11, p) && text_is(q, "old plist\n");
+    snprintf(p, sizeof p, "%s.old", app);
+    snprintf(q, sizeof q, "%s/Contents/Info.plist", app);
+    return in_trash && !f_exists(p) && text_is(q, "new plist\n");
+}
+
+static int untouched(const char *exe) {
+    char app[1100], p[1300];
+    app_of(exe, app, sizeof app);
+    snprintf(p, sizeof p, "%s.old", app);
+    return same_as_file((const uint8_t *)"old version", 11, exe) && !f_exists(p) && no_leftover(exe) && trash_empty();
+}
+#else
 static int no_leftover(const char *exe) {
     char p[1300];
     snprintf(p, sizeof p, "%s.new", exe);
@@ -184,6 +256,7 @@ static int untouched(const char *exe) {
     snprintf(p, sizeof p, "%s.old", exe);
     return same_as_file((const uint8_t *)"old version", 11, exe) && !f_exists(p) && no_leftover(exe);
 }
+#endif
 
 int main(int argc, char **argv) {
     char hex[65], path[1200];
@@ -279,10 +352,15 @@ int main(int argc, char **argv) {
     if (argc >= 4) {
         char why[400], ref[1200], sums[400], other[400];
         update_info u;
-#ifdef _WIN32
+#if defined(_WIN32)
         fake_pkg = read_all(argv[1], &fake_pkg_len);
         snprintf(ref, sizeof ref, "%s/win/vssmb/vssmb.exe", argv[3]);
         snprintf(g_exe, sizeof g_exe, "%s/run/vssmb.exe", argv[3]);
+#elif defined(__APPLE__)
+        fake_pkg = argc >= 5 ? read_all(argv[4], &fake_pkg_len) : NULL;   /* mac.zip: the stand-in app */
+        snprintf(ref, sizeof ref, "%s/mac/vssmb/" MAC_APP "/Contents/MacOS/" BINARY, argv[3]);
+        snprintf(g_exe, sizeof g_exe, "%s/run/" MAC_APP "/Contents/MacOS/" BINARY, argv[3]);
+        snprintf(trash_dir, sizeof trash_dir, "%s/trash", argv[3]);
 #else
         fake_pkg = read_all(argv[2], &fake_pkg_len);
         snprintf(ref, sizeof ref, "%s/linux/vssmb/vssmb", argv[3]);
@@ -299,7 +377,17 @@ int main(int argc, char **argv) {
         const char *bad_sums = "1111111111111111111111111111111111111111111111111111111111111111  " VSSMB_PACKAGE "\n";
         long long size = (long long)fake_pkg_len;
 
+#ifdef __APPLE__
+        {   /* the notes are beside the app */
+            char app[1100];
+            app_of(g_exe, app, sizeof app);
+            folder_of(app, run_dir, sizeof run_dir);
+        }
+#  define KEPT_OLD "the old app in the Trash"
+#else
         folder_of(g_exe, run_dir, sizeof run_dir);
+#  define KEPT_OLD "the old program kept as .old"
+#endif
 #ifdef DECK_EDITION
         printf("(the Deck edition: its notes are README.txt and STEAMDECK.txt)\n");
 #endif
@@ -309,7 +397,7 @@ int main(int argc, char **argv) {
                                    (u.state == UPD_AVAILABLE && u.can_install) ? install(why, sizeof why) : -1)
 #define CASE(url, sz, dig, sm) (reset_program(g_exe), INSTALL(url, sz, dig, sm))
         CHECK(CASE(RELEASE VSSMB_PACKAGE, size, digest, NULL) == 1 && program_is(g_exe, ref) && backup_is_old(g_exe) && no_leftover(g_exe),
-              "GitHub's digest: installed, the old program kept as .old");
+              "GitHub's digest: installed, " KEPT_OLD);
         CHECK(notes_new(), "... with the package's README.txt" DOCS_FOR " over the old one, and no other file of the package");
         CHECK(CASE(RELEASE VSSMB_PACKAGE, size, NULL, sums) == 1 && program_is(g_exe, ref) && notes_new(), "SHA256SUMS alone: installed");
         CHECK(CASE(RELEASE VSSMB_PACKAGE, size, digest, other) == 1 && program_is(g_exe, ref) && notes_new(),
@@ -334,8 +422,13 @@ int main(int argc, char **argv) {
            before the program is touched */
         reset_program(g_exe);
         remove(in_run("README.txt"));
+#ifdef __APPLE__
+        CHECK(INSTALL(RELEASE VSSMB_PACKAGE, size, digest, NULL) == 1 && program_is(g_exe, ref) && !f_exists(in_run("README.txt")) &&
+              only_expected_names(), "an app without README.txt beside it (as in Applications): installed, and none put there");
+#else
         CHECK(INSTALL(RELEASE VSSMB_PACKAGE, size, digest, NULL) == 1 && program_is(g_exe, ref) && notes_new(),
               "a folder without README.txt: the update puts the new one there");
+#endif
         reset_program(g_exe);
         remove(in_run("README.txt"));
 #ifdef _WIN32
@@ -371,8 +464,74 @@ int main(int argc, char **argv) {
         check();
         install_worker(NULL);
         updater_poll(&u);
+#ifdef __APPLE__
+        CHECK(u.state == UPD_INSTALLED && strstr(u.text, "The previous version is in the Trash."), u.text);
+        /* a volume without a Trash: the old app stays beside the new one as <app>.old, and the next update
+           clears it away first */
+        reset_program(g_exe);
+        trash_refuses = 1;
+        fake_release(RELEASE VSSMB_PACKAGE, size, digest, NULL);
+        check();
+        install_worker(NULL);
+        updater_poll(&u);
+        trash_refuses = 0;
+        CHECK(u.state == UPD_INSTALLED && strstr(u.text, "The previous version is kept as " MAC_APP ".old.") &&
+              program_is(g_exe, ref) && same_as_file((const uint8_t *)"old version", 11, in_run(MAC_APP ".old/Contents/MacOS/" BINARY)),
+              "no Trash: installed, the old app kept as <app>.old and the message says so");
+        CHECK(INSTALL(RELEASE VSSMB_PACKAGE, size, digest, NULL) == 1 && !f_exists(in_run(MAC_APP ".old")) && program_is(g_exe, ref),
+              "... and the next update removes that <app>.old first");
+        {
+            /* packages that must be refused before anything is touched: a name that climbs out of the app,
+               and no app in it */
+            static const char *const bad[] = { "mac-climb.zip", "not allowed", "mac-noapp.zip", "holds no usable" };
+            uint8_t *keep = fake_pkg;
+            size_t keep_len = fake_pkg_len;
+            for (int b = 0; b < 4; b += 2) {
+                char bad_path[1200], bad_digest[80];
+                snprintf(bad_path, sizeof bad_path, "%s/%s", argv[3], bad[b]);
+                fake_pkg = read_all(bad_path, &fake_pkg_len);
+                if (!fake_pkg) { CHECK(0, bad[b]); continue; }
+                sha256_hex(fake_pkg, fake_pkg_len, hex);
+                snprintf(bad_digest, sizeof bad_digest, "sha256:%s", hex);
+                snprintf(path, sizeof path, "%s/escaped.txt", argv[3]);
+                remove(path);
+                int r = CASE(RELEASE VSSMB_PACKAGE, (long long)fake_pkg_len, bad_digest, NULL);
+                CHECK(r == 0 && strstr(why, bad[b + 1]) && untouched(g_exe) && notes_old() && !f_exists(path), why);
+                free(fake_pkg);
+            }
+            fake_pkg = keep;
+            fake_pkg_len = keep_len;
+        }
+        {
+            /* copies that are not updated in place: a program outside an app, and an app macOS runs from a
+               temporary copy (opened straight from the download) */
+            char saved[sizeof g_exe];
+            snprintf(saved, sizeof saved, "%s", g_exe);
+            snprintf(g_exe, sizeof g_exe, "%s/run/" BINARY, argv[3]);
+            fake_release(RELEASE VSSMB_PACKAGE, size, digest, NULL);
+            check();
+            updater_poll(&u);
+            CHECK(u.state == UPD_AVAILABLE && !u.can_install && strstr(u.text, "not inside its app"), u.text);
+            snprintf(g_exe, sizeof g_exe, "/private/var/folders/xy/T/AppTranslocation/0A1B/d/" MAC_APP "/Contents/MacOS/" BINARY);
+            check();
+            updater_poll(&u);
+            CHECK(u.state == UPD_AVAILABLE && !u.can_install && strstr(u.text, "temporary place"), u.text);
+            snprintf(g_exe, sizeof g_exe, "%s", saved);
+        }
+        {
+            char app[1100];
+            CHECK(app_of("/Applications/" MAC_APP "/Contents/MacOS/" BINARY, app, sizeof app) && !strcmp(app, "/Applications/" MAC_APP),
+                  "the app of a program inside one");
+            CHECK(!app_of("/usr/local/bin/" BINARY, app, sizeof app), "no app for a program outside one");
+            CHECK(!app_of("/x/Name.app/Contents/MacOS/sub/" BINARY, app, sizeof app), "no app for a program deeper inside");
+            CHECK(!app_of("/x/Name/Contents/MacOS/" BINARY, app, sizeof app), "no app for a folder without .app");
+            CHECK(safe_path("Contents/MacOS/" BINARY) && !safe_path("../x") && !safe_path("a/../b") && !safe_path("/abs") &&
+                  !safe_path("a//b") && !safe_path("a/./b") && !safe_path("") && !safe_path("a\\b"), "names allowed inside an app");
+        }
+#else
         CHECK(u.state == UPD_INSTALLED && strstr(u.text, "The previous version is kept as " BINARY ".old."), u.text);
-#ifndef _WIN32
+#endif
+#if !defined(_WIN32) && !defined(__APPLE__)
         /* a drive without hard links: here a folder in the way of vssmb.old */
         reset_program(g_exe);
         mkdir(in_run(BINARY ".old"), 0755);

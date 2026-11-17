@@ -1,5 +1,5 @@
 /*
- * filedialog.c - Windows: GetOpenFileNameW (comdlg32); macOS: osascript;
+ * filedialog.c - Windows: GetOpenFileNameW (comdlg32); macOS: the Cocoa open panel (macos.m);
  * Linux/BSD: zenity or kdialog if installed; Android: the system document picker
  * (asynchronous: the chosen file arrives as an SDL_DROPFILE event).
  */
@@ -70,6 +70,20 @@ int file_dialog_open_kind(SDL_Window *parent, int kind, char *out, size_t out_le
     return 0;
 }
 
+#elif defined(__APPLE__)
+#include "macos.h"
+
+int file_dialog_available(void) { return 1; }
+
+int file_dialog_open(SDL_Window *parent, char *out, size_t out_len) { return file_dialog_open_kind(parent, FILE_KIND_DUMP, out, out_len); }
+
+int file_dialog_open_kind(SDL_Window *parent, int kind, char *out, size_t out_len) {
+    (void)parent;
+    if (kind == FILE_KIND_ALLSTARS)
+        return macos_choose_file("Select your own Super Mario All-Stars ROM (SNES, USA): .sfc, .smc or a .zip with one", out, out_len);
+    return macos_choose_file("Select your own VS. Super Mario Bros. dump (.nes, a .zip with one, or MAME suprmrio.zip)", out, out_len);
+}
+
 #else
 #include <unistd.h>
 
@@ -91,24 +105,13 @@ static int have_cmd(const char *name) {
 }
 
 int file_dialog_available(void) {
-#ifdef __APPLE__
-    return 1;
-#else
     return have_cmd("zenity") || have_cmd("kdialog");
-#endif
 }
 
 int file_dialog_open(SDL_Window *parent, char *out, size_t out_len) { return file_dialog_open_kind(parent, FILE_KIND_DUMP, out, out_len); }
 
 int file_dialog_open_kind(SDL_Window *parent, int kind, char *out, size_t out_len) {
     (void)parent;
-#ifdef __APPLE__
-    if (kind == FILE_KIND_ALLSTARS)
-        return run_capture("osascript -e 'POSIX path of (choose file with prompt \"Select your Super Mario All-Stars ROM\")' 2>/dev/null",
-                           out, out_len);
-    return run_capture("osascript -e 'POSIX path of (choose file with prompt \"Select your VS. Super Mario Bros. dump\")' 2>/dev/null",
-                       out, out_len);
-#else
     if (kind == FILE_KIND_ALLSTARS) {
         if (have_cmd("zenity"))
             return run_capture("zenity --file-selection --title='Select your Super Mario All-Stars ROM' "
@@ -123,6 +126,5 @@ int file_dialog_open_kind(SDL_Window *parent, int kind, char *out, size_t out_le
     if (have_cmd("kdialog"))
         return run_capture("kdialog --getopenfilename . 'VS. Super Mario Bros. dump (*.nes *.zip)' 2>/dev/null", out, out_len);
     return 0;
-#endif
 }
 #endif

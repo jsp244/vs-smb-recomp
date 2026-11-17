@@ -2,7 +2,7 @@
 
 ▶ **Video:** https://youtu.be/xrQsZQ4zaHs
 
-A native Windows, Linux, Steam Deck and Android build of Nintendo's arcade *VS. Super
+A native Windows, macOS, Linux, Steam Deck and Android build of Nintendo's arcade *VS. Super
 Mario Bros.* (Vs. System, 1986), produced by **statically recompiling your own dump of
 the board** into C and linking it against a small hardware runtime (PPU with the
 arcade's RGB palette, APU, the Vs. System's mapper, coin slots and DIP switches).
@@ -338,6 +338,9 @@ pacman -S --needed mingw-w64-x86_64-gcc mingw-w64-x86_64-SDL2 make python
 **Linux**: `sudo apt install build-essential python3 libsdl2-dev` (or your distro's
 equivalent) for a local build; portable packages are built in a container (below).
 
+**macOS**: Xcode's command line tools (`xcode-select --install`), Python 3 and CMake;
+`tools/macos/build.sh` builds SDL2 itself (below).
+
 Then:
 
 ```
@@ -383,6 +386,28 @@ the generic Linux build does the same when it finds itself on a Deck. Its packag
 carries `add-to-steam.py`, which adds the game to Steam with library artwork from
 SteamGridDB. Setup on the Deck: `docs/STEAMDECK.md`.
 
+### macOS package
+
+`tools/macos/build.sh` (on a Mac, after `make recomp`, with `VSSMB_VERSION` and
+`VSSMB_REPO` set as for Linux) builds SDL2 as a static library for Apple silicon and
+Intel Macs, then the game for both in one program for macOS 11 and newer, runs the
+cosimulation and the self-tests (offscreen, the Intel half again under Rosetta, then the
+app itself in a real window, opened with a ROM dropped on it), and writes
+`dist/vssmb-macos.zip`: the folder `vssmb` with `VS. Super Mario Bros.app` and
+`README.txt`. The app is signed ad hoc (Apple silicon runs nothing unsigned), not
+through Apple's developer program, so macOS asks the player to allow it once
+(`docs/PLAYERS.md`). It links only macOS's own libraries, libcurl among them for the
+Updates tab, and never writes into itself: settings and saves go to
+`~/Library/Application Support/VSSMBPort/VSSuperMarioBros/`, and the folder the app is
+in takes the place of the program's folder for a ROM, `rom.cfg` or
+`launcher-background.bmp`. `frontend/macos.m` holds the little Cocoa it needs (the
+open-file panel, the Trash).
+
+`.github/workflows/macos.yml` runs the script on GitHub's Macs for the `macos` branch and
+for `v*` tags. The ROM it recompiles comes from a private repository, read with a deploy
+key kept as a secret; the package and the test pictures leave the job only encrypted
+(`openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 -pass ...` opens the artifact).
+
 ### Android
 
 `android/build_apk.py` builds two APKs straight from the Android SDK tools (no Gradle):
@@ -425,6 +450,12 @@ must match, and a package without either is not installed). Then:
 * **Linux and the Steam Deck**: the same from the tar.gz; the running program keeps a
   second name, `vssmb.old` (a hard link, where the drive allows one), and the new file is
   renamed over `vssmb`, which replaces it in one step.
+* **macOS**: the app in the zip is written beside the running one as
+  `VS. Super Mario Bros.app.new` (its program must be a Mac program, and no name in it may
+  lead outside it); the running app is renamed `.app.old`, the new one takes its name, and
+  the old one goes to the Trash (where a volume has none, it stays as `.app.old` until the
+  next update). An app macOS runs from a temporary copy (opened straight from the
+  download, "App Translocation") is not updated in place: the tab says to move it first.
 * **Android**: the APK of the app's edition goes to the system's package installer
   (a `PackageInstaller` session), which asks the player to confirm (the first time, it
   also asks to allow this app to install updates); Android then closes the game and
@@ -434,14 +465,16 @@ On Windows and Linux the package's player notes go in with the program: `README.
 (`docs/PLAYERS.md`, which carries the licences of the code in the program, LakeSnes's among
 them) and, in the Deck edition, `STEAMDECK.txt`. Each is written beside the old one as
 `<name>.new` and renamed over it, before the program's own swap; if one cannot be replaced
-(open in another program on Windows), nothing is installed. No other file of the package is
-written. Settings, saves and the ROM are never touched. **Restart now** (Windows, Linux) shuts down
+(open in another program on Windows), nothing is installed. On macOS the notes are inside
+the app as well and `README.txt` beside it is replaced only where there is one (the
+package's folder, not Applications). No other file of the package is
+written. Settings, saves and the ROM are never touched. **Restart now** (Windows, Linux, macOS) shuts down
 as Quit does and starts the new version; on Linux it takes over the same process, so on
-a Steam Deck the game session carries on. `vssmb --update-check` prints what a check finds.
+a Steam Deck the game session carries on, and on macOS it opens the new app. `vssmb --update-check` prints what a check finds.
 
-A release is a `v*` tag with the five packages attached (`make dist`,
-`tools/linux/build.sh`, `android/build_apk.py`, built from that tag so they carry its
-version) and their checksums as `SHA256SUMS` (`sha256sum vssmb-* > SHA256SUMS`).
+A release is a `v*` tag with the six packages attached (`make dist`,
+`tools/linux/build.sh`, `tools/macos/build.sh`, `android/build_apk.py`, built from that tag
+so they carry its version) and their checksums as `SHA256SUMS` (`sha256sum vssmb-* > SHA256SUMS`).
 
 ### Controls
 
@@ -549,12 +582,14 @@ for the widescreen canvas; numbered with `--png-every`) and can dump the SNES sa
 ```
 recomp/        the static recompiler (Python) and symbols.txt (address labels, no game data)
 runtime/       hardware runtime + headless harness (C11), the MAME zip reader
-frontend/      SDL2 player (menu, video, audio, input, touch controls, rewind, updates)
+frontend/      SDL2 player (menu, video, audio, input, touch controls, rewind, updates; macos.m)
 android/       Android app: CMake project, manifest, activity, build_apk.py
 tests/         accuracy tests, cosimulation, nestest comparison, module tests
-tools/         icon generator, Linux / Steam Deck build container (tools/linux), Steam
-               shortcut script (tools/steamdeck), Android device test tools, DXGI adapter lister
-docs/          architecture notes, player notes (Windows/Linux, Steam Deck, Android), latency notes
+tools/         icon generator, Linux / Steam Deck build container (tools/linux), macOS build
+               script and Info.plist (tools/macos), Steam shortcut script (tools/steamdeck),
+               Android device test tools, DXGI adapter lister
+docs/          architecture notes, player notes (Windows/macOS/Linux, Steam Deck, Android), latency notes
+.github/       the workflow that builds and tests the macOS package on GitHub's Macs
 generated/     output of make recomp (git-ignored)
 rom/           your dump (git-ignored)
 ```

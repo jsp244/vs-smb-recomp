@@ -45,6 +45,9 @@
 #include "rewind.h"
 #include "touchpad.h"
 #include "updater.h"
+#ifdef __APPLE__
+#include "macos.h"
+#endif
 #include <stdarg.h>
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -63,6 +66,18 @@ extern const uint8_t icon_rgba[];
 #define SAMPLE_RATE 48000
 #define FAST_FORWARD_FRAMES 8
 #define GAME_LAG 1               /* frames from a press to the first changed picture: the run-ahead default */
+
+/* the fixed keys a Mac has in its own way: Cmd+R as well as Ctrl+R, and Option+Return (Alt+Enter)
+   for fullscreen, since F11 shows the desktop there */
+#ifdef __APPLE__
+#define KMOD_SHORTCUT (KMOD_CTRL | KMOD_GUI)
+#define KEYS_INI "Option+Return = fullscreen, F12 = screenshot, Cmd+R = reset"
+#define KEYS_HELP "P pause, F5 / F8 save / load, F6 / F7 slot, F12 screenshot (F keys with fn on a laptop), Option+Return fullscreen, Cmd+R reset."
+#else
+#define KMOD_SHORTCUT KMOD_CTRL
+#define KEYS_INI "F11 or Alt+Enter = fullscreen, F12 = screenshot, Ctrl+R = reset"
+#define KEYS_HELP "P pause, F5 / F8 save / load, F6 / F7 slot, F11 fullscreen, F12 screenshot, Ctrl+R reset."
+#endif
 
 /* ------------------------------------------------------------------ */
 /* configuration                                                       */
@@ -160,8 +175,9 @@ static int game_started;              /* the machine has run since the ROM was l
 static int running = 1;
 static int restart_after_quit;        /* Updates tab: start the installed version once shut down */
 
-static char base_dir[1024];           /* directory of the executable, with trailing separator */
+static char base_dir[1024];           /* directory of the executable (on macOS, of the app), with trailing separator */
 static char data_dir[1024];           /* settings, saves, screenshots: base_dir when writable, else the per-user folder */
+static int in_app_bundle;             /* macOS: running from an .app, which is never written to */
 static char rom_hashes[120];          /* "SHA-1 ... MD5 ... CRC32 ..." of the loaded dump */
 static char ini_path[1200];
 static char rom_name[256];            /* ROM file name without extension, for save files */
@@ -324,11 +340,13 @@ static void absolute_path(const char *in, char *out, size_t n) {
 /* Settings and saves live next to the executable when that folder can be written
    (portable use). Otherwise (Program Files, a read-only share, running straight
    from inside a zip) they go to the per-user application-data folder, so the
-   chosen ROM is remembered either way. */
+   chosen ROM is remembered either way. A Mac app always keeps them in the user's
+   Application Support folder, as Mac programs do: it often sits in Applications,
+   and anything written into the app itself would break its signature. */
 static void choose_data_dir(void) {
     char probe[1200];
     snprintf(probe, sizeof probe, "%s.write-test", base_dir);
-    FILE *f = nes_fopen(probe, "wb");
+    FILE *f = in_app_bundle ? NULL : nes_fopen(probe, "wb");
     if (f) {
         fclose(f);
 #ifdef _WIN32
@@ -344,6 +362,21 @@ static void choose_data_dir(void) {
     if (p) { snprintf(data_dir, sizeof data_dir, "%s", p); SDL_free(p); }
     else snprintf(data_dir, sizeof data_dir, "%s", base_dir);
 }
+
+#ifdef __APPLE__
+/* Inside an app bundle SDL gives the bundle's Resources folder as the program's. The folder the app
+   sits in takes that part instead (the ROM, rom.cfg or launcher-background.bmp beside the app), and
+   the bundle is never written to (choose_data_dir). */
+static void app_folder_as_base(void) {
+    static const char tail[] = ".app/Contents/Resources/";
+    size_t n = strlen(base_dir), t = sizeof tail - 1;
+    if (n <= t || SDL_strcasecmp(base_dir + n - t, tail) != 0) return;
+    base_dir[n - t + 4] = '\0';                  /* .../Name.app */
+    char *slash = strrchr(base_dir, '/');
+    if (slash) slash[1] = '\0';
+    in_app_bundle = 1;
+}
+#endif
 
 /* ------------------------------------------------------------------ */
 /* platforms                                                           */
@@ -459,7 +492,7 @@ static void write_config(void) {
     fputs(";\n; Fixed keys: Esc or Start + Insert coin together = menu (also LT + RT on Android and the Steam Deck),\n"
           ";             P = pause, F5 = save state,\n"
           ";             F8 = load state, F6 / F7 = slot,\n"
-          ";             F11 or Alt+Enter = fullscreen, F12 = screenshot, Ctrl+R = reset\n", f);
+          ";             " KEYS_INI "\n", f);
     fclose(f);
 }
 
@@ -1094,6 +1127,22 @@ static void toggle_fullscreen(void) {
     if (handheld) return;   /* a handheld's own screen: always fullscreen */
     cfg.display_mode = cfg.display_mode ? 0 : 1;
     apply_graphics();
+}
+
+/* Mouse positions come in the window's own units, the menu is laid out in the renderer's pixels: on a
+   Retina Mac (or a scaled Wayland desktop) one unit is two pixels or more, so positions are scaled first */
+static void mouse_to_pixels(SDL_Event *ev) {
+    int ww, wh, ow, oh;
+    if (ev->type != SDL_MOUSEMOTION && ev->type != SDL_MOUSEBUTTONDOWN && ev->type != SDL_MOUSEBUTTONUP) return;
+    SDL_GetWindowSize(window, &ww, &wh);
+    if (SDL_GetRendererOutputSize(renderer, &ow, &oh) != 0 || ww <= 0 || wh <= 0 || (ow == ww && oh == wh)) return;
+    if (ev->type == SDL_MOUSEMOTION) {
+        ev->motion.x = (int)((long long)ev->motion.x * ow / ww);
+        ev->motion.y = (int)((long long)ev->motion.y * oh / wh);
+    } else {
+        ev->button.x = (int)((long long)ev->button.x * ow / ww);
+        ev->button.y = (int)((long long)ev->button.y * oh / wh);
+    }
 }
 
 /* sleep until the given performance-counter time, coarse SDL_Delay first, then a short spin */
@@ -1765,7 +1814,7 @@ static void build_menu(void) {
     ctl_items[K_TOTAL + 1] = (ui_item){ "", UI_INFO, 0, NULL, NULL, 0, 0, 0, 0, NULL, "", NULL };
     ctl_items[K_TOTAL + 2] = (ui_item){ "", UI_INFO, 0, NULL, NULL, 0, 0, 0, 0, NULL,
         "Menu: Start + Insert coin together, Esc, Guide or LB. Fast-forward within 1.5 s after a rewind goes forward again to where it began. "
-        "P pause, F5 / F8 save / load, F6 / F7 slot, F11 fullscreen, F12 screenshot, Ctrl+R reset.", NULL };
+        KEYS_HELP, NULL };
     if (touchpad_enabled())
         snprintf(ctl_items[K_TOTAL + 2].info, sizeof ctl_items[K_TOTAL + 2].info, "%s",
                  "On the screen: d-pad, B, A, COIN (insert coin), START (1 player), and MENU for this menu (Back works too). "
@@ -2206,6 +2255,9 @@ static void usage(void) {
            "  VERSION, then installs the newest release over this program and starts it with args (scratch folders only)\n"
            "  --launcher / --no-launcher: open this menu / go straight into the game (the RetComM launcher's options);\n"
            "  with no ROM given, a rom.cfg beside the program can name one\n");
+#ifdef __APPLE__
+    printf("  --dialog-test: the open-file panel must come up and close again (it closes by itself after a second)\n");
+#endif
 }
 
 static uint64_t fb_hash(void) {
@@ -2361,11 +2413,11 @@ int main(int argc, char **argv) {
     const char *shot_state = NULL;
     int selftest_frames = 0, uishot_tab = 0, uishot_frames = 0, gameshot_frames = 300, rewind_test = 0, reset_test = 0, list_pads = 0, autoplay = 0;
     const char *list_modes_file = NULL;
-    int list_modes_flag = 0, chord_test = 0, touch_flag = 0, touch_test = 0, quit_after = 0;
+    int list_modes_flag = 0, chord_test = 0, touch_flag = 0, touch_test = 0, quit_after = 0, dialog_test = 0;
     const char *update_pretend = NULL;
     char **update_then = NULL, **launch_argv = argv;   /* the restart after an update runs the same command line */
     int update_test = 0;
-#if !defined(_WIN32) && !defined(__ANDROID__)
+#if defined(__linux__) && !defined(__ANDROID__)
     /* diagnostics on Linux, where a Steam shortcut has no easy command line: when started
        without options, those in args.txt next to the program (one per line) are used */
     static char *file_args[34];
@@ -2411,6 +2463,10 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i], "--trigger-test")) trigger_test_flag = 1;
         else if (!strcmp(argv[i], "--touch")) touch_flag = 1;   /* the phone edition: on-screen controls */
         else if (!strcmp(argv[i], "--touch-test")) touch_test = 1;
+#ifdef __APPLE__
+        else if (!strcmp(argv[i], "--dialog-test")) dialog_test = 1;
+        else if (!strncmp(argv[i], "-psn_", 5)) continue;   /* the process serial number older macOS adds */
+#endif
         else if (!strcmp(argv[i], "--help") || !strcmp(argv[i], "-h")) { usage(); return 0; }
         else if (!strcmp(argv[i], "--list-controllers")) { list_pads = 1; if (i + 1 < argc) list_pads_file = argv[++i]; }
         else if (!strcmp(argv[i], "--list-modes")) { list_modes_flag = 1; if (i + 1 < argc) list_modes_file = argv[++i]; }
@@ -2467,6 +2523,9 @@ int main(int argc, char **argv) {
     char *bp = SDL_GetBasePath();
     snprintf(base_dir, sizeof base_dir, "%s", bp ? bp : "./");
     if (bp) SDL_free(bp);
+#ifdef __APPLE__
+    app_folder_as_base();
+#endif
     choose_data_dir();
     updater_startup();
 #ifdef __ANDROID__
@@ -2576,6 +2635,16 @@ int main(int argc, char **argv) {
     ui_select_first(&menu);
 
     /* ---- self tests ---- */
+#ifdef __APPLE__
+    if (dialog_test) {   /* the open-file panel comes up over the game's window and goes again */
+        int ok = macos_dialog_selftest();
+        printf("dialog-test: %s\n", ok ? "OK" : "FAILED");
+        font_quit(); SDL_DestroyRenderer(renderer); SDL_DestroyWindow(window); SDL_Quit();
+        return ok ? 0 : 1;
+    }
+#else
+    (void)dialog_test;
+#endif
     if (touch_test) {
         int rc = touchpad_selftest();
         font_quit(); SDL_DestroyRenderer(renderer); SDL_DestroyWindow(window); SDL_Quit();
@@ -2758,6 +2827,7 @@ int main(int argc, char **argv) {
         SDL_Event ev;
         while (SDL_PollEvent(&ev)) {
             if (ev.type == SDL_QUIT) { running = 0; break; }
+            mouse_to_pixels(&ev);
             if (ev.type == SDL_APP_WILLENTERBACKGROUND || ev.type == SDL_APP_TERMINATING) {
                 /* a phone OS may end the app while it is in the background: keep the saves and settings */
                 battery_check(1);
@@ -2818,7 +2888,7 @@ int main(int argc, char **argv) {
                 case SDLK_F8: state_load(); break;
                 case SDLK_F12: save_screenshot(); break;
                 case SDLK_p: paused = !paused; audio_out_clear(); break;
-                case SDLK_r: if (ev.key.keysym.mod & KMOD_CTRL) { sys.vs_dip = dip_bits(); nes_reset(); chord_clear(); osd("Reset"); } break;
+                case SDLK_r: if (ev.key.keysym.mod & KMOD_SHORTCUT) { sys.vs_dip = dip_bits(); nes_reset(); chord_clear(); osd("Reset"); } break;
                 default: break;
                 }
             } else if (ev.type == SDL_CONTROLLERBUTTONDOWN &&

@@ -1,6 +1,7 @@
 """Draws the port's icon (original artwork: an arcade token marked VS on a red
-badge) and writes it as a Windows .ico (16/32/48/256), a PNG preview and a C
-array for SDL_SetWindowIcon. Pure Python, no image libraries.
+badge) and writes it as a Windows .ico (16/32/48/256), a macOS .icns (16 to
+1024), a PNG preview and a C array for SDL_SetWindowIcon. Pure Python, no image
+libraries.
 
 usage: python tools/make_icon.py
 """
@@ -11,6 +12,7 @@ import zlib
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 OUT_ICO = os.path.join(ROOT, "frontend", "vssmb.ico")
+OUT_ICNS = os.path.join(ROOT, "frontend", "vssmb.icns")
 OUT_PNG = os.path.join(ROOT, "frontend", "icon_preview.png")
 OUT_C = os.path.join(ROOT, "frontend", "icon_data.c")
 
@@ -116,12 +118,29 @@ def bmp_entry(size, rgba):
     return header + b"".join(rows) + mask_row * size
 
 
+def icns(images):
+    """the macOS icon: a PNG in each slot macOS reads, the 16 to 512 point sizes at 1x and 2x"""
+    slots = (("icp4", 16), ("icp5", 32), ("ic11", 32), ("ic12", 64), ("ic07", 128), ("ic13", 256),
+             ("ic08", 256), ("ic14", 512), ("ic09", 512), ("ic10", 1024))
+    body = b""
+    for tag, s in slots:
+        data = png(s, images[s])
+        body += tag.encode("ascii") + struct.pack(">I", 8 + len(data)) + data
+    return b"icns" + struct.pack(">I", 8 + len(body)) + body
+
+
 def main():
     sizes = (16, 32, 48, 256)
     images = {}
     for s in sizes:
         images[s] = render(s, ss=6 if s <= 48 else 2)
         print(f"rendered {s}x{s}")
+    mac = {16: images[16], 32: images[32], 256: images[256]}
+    for s in (64, 128, 512, 1024):
+        mac[s] = render(s, ss=4 if s <= 128 else 2)
+        print(f"rendered {s}x{s}")
+    with open(OUT_ICNS, "wb") as f:
+        f.write(icns(mac))
     entries = []
     for s in sizes:
         data = png(s, images[s]) if s == 256 else bmp_entry(s, images[s])
@@ -146,7 +165,7 @@ def main():
         for i in range(0, len(data), 32):
             f.write("    " + ",".join(str(b) for b in data[i:i + 32]) + ",\n")
         f.write("};\n")
-    print("wrote", OUT_ICO, OUT_PNG, OUT_C)
+    print("wrote", OUT_ICO, OUT_ICNS, OUT_PNG, OUT_C)
 
 
 if __name__ == "__main__":

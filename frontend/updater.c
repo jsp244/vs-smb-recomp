@@ -19,12 +19,18 @@
  *    <name>.old (a hard link, where the drive allows one), and <name>.new is renamed over it,
  *    which swaps it in one step. Restart now exec()s the new version in the same process, so a
  *    Steam session carries on.
+ *  - macOS: the zip holds the app (MAC_APP). Its files are written beside the running app as
+ *    <app>.new, the running app is renamed <app>.old, the new one takes its name, and the old one
+ *    goes to the Trash. Nothing is written inside an app (its signature covers every file in it).
+ *    An app macOS runs from a temporary copy (straight from the download, "App Translocation")
+ *    is not updated in place. Restart now opens the new app through Launch Services.
  *  - Android: the APK goes to the system's package installer (VSSMBActivity.installUpdate),
  *    which asks the player to confirm, closes the game and installs the update over it.
  * On the desktop the player's notes in the package (README.txt, which carries the licences of
  * the code in the program, and STEAMDECK.txt in the Deck edition) are written the same way,
  * <name>.new renamed over <name>, and before the program: a folder never runs a new version
- * with the old notes. Only those names are written. Settings, saves and the ROM are never
+ * with the old notes (on macOS only where the app has its README.txt beside it, as in the
+ * package's folder). Only those names are written. Settings, saves and the ROM are never
  * touched. Checks and installations run on a worker thread; the menu reads the state on the
  * main thread.
  */
@@ -55,6 +61,14 @@
 #ifdef __ANDROID__
 #  include <jni.h>
 #endif
+#ifdef __APPLE__
+#  include <ftw.h>
+#  include <mach-o/dyld.h>
+#  include <spawn.h>
+#  include <sys/wait.h>
+#  include "macos.h"
+extern char **environ;
+#endif
 
 #ifndef VSSMB_VERSION
 #  define VSSMB_VERSION "dev"
@@ -82,6 +96,12 @@
 #endif
 #ifndef PACKAGE_DIR
 #  define PACKAGE_DIR "vssmb"
+#endif
+#ifdef __APPLE__
+/* the app in the macOS package's folder (the player's copy may have another name) */
+#  ifndef MAC_APP
+#    define MAC_APP "VS. Super Mario Bros.app"
+#  endif
 #endif
 #ifndef __ANDROID__
 /* the player's notes beside the program in the desktop packages (the Makefile's dist rule):
@@ -150,6 +170,8 @@ const char *updater_edition(void) {
     return g_touch ? "Android, phone" : "Android";
 #elif defined(_WIN32)
     return "Windows";
+#elif defined(__APPLE__)
+    return "macOS";
 #elif defined(DECK_EDITION)
     return "Steam Deck";
 #else
@@ -361,16 +383,19 @@ static int sums_lookup(const char *text, size_t len, const char *name, char hex[
 static uint32_t rd16(const uint8_t *p) { return (uint32_t)p[0] | (uint32_t)p[1] << 8; }
 static uint32_t rd32(const uint8_t *p) { return rd16(p) | rd16(p + 2) << 16; }
 
+/* where the zip's central directory starts and how many entries it lists (from the record at the
+   end of the file, within its last 64 KiB + 22 bytes) */
+static int zip_directory(const uint8_t *zip, size_t len, size_t *entries, size_t *start) {
+    for (size_t i = len >= 22 ? len - 22 : 0;; i--) {
+        if (i + 22 <= len && rd32(zip + i) == 0x06054b50u) { *entries = rd16(zip + i + 10); *start = rd32(zip + i + 16); return 1; }
+        if (i == 0 || len - i > 65535 + 22) return 0;
+    }
+}
+
 /* a malloc'd copy of the zip entry called name, checked against its CRC-32, or NULL */
 static uint8_t *zip_entry(const uint8_t *zip, size_t len, const char *name, size_t *out_len) {
-    size_t eocd = 0, nlen = strlen(name);
-    int found = 0;
-    for (size_t i = len >= 22 ? len - 22 : 0;; i--) {   /* end of the central directory: within the last 64 KiB + 22 bytes */
-        if (i + 22 <= len && rd32(zip + i) == 0x06054b50u) { eocd = i; found = 1; break; }
-        if (i == 0 || len - i > 65535 + 22) break;
-    }
-    if (!found) return NULL;
-    size_t entries = rd16(zip + eocd + 10), p = rd32(zip + eocd + 16);
+    size_t entries, p, nlen = strlen(name);
+    if (!zip_directory(zip, len, &entries, &p)) return NULL;
     for (size_t k = 0; k < entries; k++) {
         if (p + 46 > len || rd32(zip + p) != 0x02014b50u) return NULL;
         uint32_t flags = rd16(zip + p + 8), method = rd16(zip + p + 10), crc = rd32(zip + p + 16);
@@ -393,6 +418,26 @@ static uint8_t *zip_entry(const uint8_t *zip, size_t len, const char *name, size
     }
     return NULL;
 }
+
+#ifdef __APPLE__
+/* each entry of the zip to fn, until it returns non-zero (which this returns): its name (n bytes, not
+   NUL terminated) and the Unix mode a Unix zip tool recorded for it (0 when none did); -1 when the
+   directory is damaged */
+static int zip_each(const uint8_t *zip, size_t len, int (*fn)(void *ctx, const char *name, size_t n, unsigned mode), void *ctx) {
+    size_t entries, p;
+    if (!zip_directory(zip, len, &entries, &p)) return -1;
+    for (size_t k = 0; k < entries; k++) {
+        if (p + 46 > len || rd32(zip + p) != 0x02014b50u) return -1;
+        size_t fn_len = rd16(zip + p + 28), extra = rd16(zip + p + 30), comment = rd16(zip + p + 32);
+        unsigned mode = (rd16(zip + p + 4) >> 8) == 3 ? rd32(zip + p + 38) >> 16 : 0;   /* made by Unix: st_mode */
+        if (p + 46 + fn_len > len) return -1;
+        int r = fn(ctx, (const char *)zip + p + 46, fn_len, mode);
+        if (r) return r;
+        p += 46 + fn_len + extra + comment;
+    }
+    return 0;
+}
+#endif
 
 /* the contents of a gzip file (one member, as Python's tarfile writes it), checked against its CRC-32 */
 static uint8_t *gunzip(const uint8_t *gz, size_t len, size_t *out_len) {
@@ -485,6 +530,12 @@ static int find_exe(void) {   /* main thread */
     wchar_t w[1024];
     DWORD n = GetModuleFileNameW(NULL, w, 1024);
     if (n == 0 || n >= 1024 || WideCharToMultiByte(CP_UTF8, 0, w, -1, g_exe, sizeof g_exe, NULL, NULL) <= 0) g_exe[0] = '\0';
+#elif defined(__APPLE__)
+    char raw[1024], *real = NULL;
+    uint32_t n = sizeof raw;
+    if (_NSGetExecutablePath(raw, &n) == 0) real = realpath(raw, NULL);
+    snprintf(g_exe, sizeof g_exe, "%s", real && strlen(real) < sizeof g_exe ? real : "");
+    free(real);
 #elif !defined(__ANDROID__)
     ssize_t n = readlink("/proc/self/exe", g_exe, sizeof g_exe - 1);
     g_exe[n > 0 ? n : 0] = '\0';
@@ -563,6 +614,51 @@ static void folder_of(const char *path, char *out, size_t cap) {
     snprintf(out, cap, "%.*s", (int)(name_in(path) - path), path);
 }
 
+#ifdef __APPLE__
+/* the app that holds the program exe: ".../Name.app" for ".../Name.app/Contents/MacOS/name"; 0 for a
+   program outside an app */
+static int app_of(const char *exe, char *app, size_t cap) {
+    const char *m = NULL;
+    for (const char *p = strstr(exe, "/Contents/MacOS/"); p; p = strstr(p + 1, "/Contents/MacOS/")) m = p;
+    if (!m || m - exe < 5 || SDL_strncasecmp(m - 4, ".app", 4) != 0 || strchr(m + 16, '/') || (size_t)(m - exe) >= cap) return 0;
+    snprintf(app, cap, "%.*s", (int)(m - exe), exe);
+    return 1;
+}
+
+/* macOS runs a downloaded app that was not moved from a temporary, read-only copy */
+static int translocated(const char *app) { return strstr(app, "/AppTranslocation/") != NULL; }
+
+static int rm_one(const char *path, const struct stat *st, int type, struct FTW *f) {
+    (void)st; (void)f;
+    return (type == FTW_DP || type == FTW_D || type == FTW_DNR) ? rmdir(path) : unlink(path);
+}
+
+/* a folder and everything in it (links are removed, not followed); nothing when it is not there */
+static void remove_tree(const char *path) {
+    struct stat st;
+    if (lstat(path, &st) != 0) return;
+    if (S_ISDIR(st.st_mode)) nftw(path, rm_one, 16, FTW_DEPTH | FTW_PHYS);
+    else unlink(path);
+}
+
+/* a folder, and those above it that are not there yet */
+static int make_dirs(const char *path) {
+    char p[1300];
+    struct stat st;
+    size_t n = strlen(path);
+    if (n == 0 || n >= sizeof p) return 0;
+    memcpy(p, path, n + 1);
+    for (size_t i = 1; i <= n; i++) {
+        if (p[i] != '/' && p[i] != '\0') continue;
+        char c = p[i];
+        p[i] = '\0';
+        if (mkdir(p, 0755) != 0 && errno != EEXIST) return 0;
+        p[i] = c;
+    }
+    return stat(path, &st) == 0 && S_ISDIR(st.st_mode);
+}
+#endif
+
 /* ---- Android: the system's package installer, through VSSMBActivity ---- */
 
 #ifdef __ANDROID__
@@ -630,9 +726,18 @@ static int release_download(const char *url, const char *tag) {
     return n > 0 && (size_t)n < sizeof prefix && same_text_nocase(url, prefix, (size_t)n) && !strchr(url + n, '/');
 }
 
-/* the program's folder can take the new version (desktop): <program>.new can be made there */
+/* the program's folder can take the new version (desktop): <program>.new can be made there (on
+   macOS: the folder <app>.new beside the app, which macOS does not run from a temporary copy) */
 static int folder_writable(void) {
-#ifdef __ANDROID__
+#if defined(__ANDROID__)
+    return 1;
+#elif defined(__APPLE__)
+    char app[1024], probe[1100];
+    if (!app_of(g_exe, app, sizeof app) || translocated(app)) return 0;
+    snprintf(probe, sizeof probe, "%s.new", app);
+    remove_tree(probe);
+    if (mkdir(probe, 0755) != 0) return 0;
+    rmdir(probe);
     return 1;
 #else
     char probe[1100];
@@ -664,6 +769,25 @@ static void local_day(const char *utc, char *out, size_t cap) {
 #endif
     strftime(out, cap, "%Y-%m-%d", &tm);
 }
+
+#ifdef __APPLE__
+/* check: why this copy of the app cannot take the update in place (folder_writable said no) */
+static void mac_not_here(const char *latest, const char *date, const char *page) {
+    char app[1024], dir[1100];
+    if (!app_of(g_exe, app, sizeof app))
+        set_state(UPD_AVAILABLE, "Version %s is out (published %s), but this program is not inside its app (%s), so it is not "
+                  "updated from here: download it from %s", latest, date, MAC_APP, page);
+    else if (translocated(app))
+        set_state(UPD_AVAILABLE, "Version %s is out (published %s). macOS runs this copy from a temporary place because it was "
+                  "opened straight from the download: move the app to your Applications folder (or any other), open it from "
+                  "there and check again, or download the update from %s", latest, date, page);
+    else {
+        folder_of(app, dir, sizeof dir);
+        set_state(UPD_AVAILABLE, "Version %s is out (published %s), but the folder of this app (%.120s) cannot be written: "
+                  "download it from %s", latest, date, dir, page);
+    }
+}
+#endif
 
 static void check(void) {
     char url[320], tag[64] = "", page[256] = "", published[40] = "", date[40], asset[512] = "", sums[512] = "", digest[80] = "";
@@ -738,16 +862,23 @@ static void check(void) {
                                   latest, date, pkg[0] ? pkg : updater_edition(), page);
     else if (!have_sum) set_state(UPD_AVAILABLE, "Version %s is out (published %s), but the release gives no SHA-256 checksum for "
                                   "%s, so it is not installed from here: see %s", latest, date, pkg, page);
+#if defined(__APPLE__)
+    else if (!writable) mac_not_here(latest, date, page);
+    else set_state(UPD_AVAILABLE, "Version %s is out (published %s). Update now downloads %.1f MB from GitHub, checks it and "
+                   "replaces this app (the old one goes to the Trash); settings, saves and the ROM stay as they are.",
+                   latest, date, size / 1048576.0);
+#else
     else if (!writable) set_state(UPD_AVAILABLE, "Version %s is out (published %s), but this program's folder (%.120s) cannot be "
                                   "written: download it from %s", latest, date, dir, page);
-#ifdef __ANDROID__
+#  if defined(__ANDROID__)
     else set_state(UPD_AVAILABLE, "Version %s is out (published %s). Update now downloads %.1f MB from GitHub and checks it; "
                    "Android then asks you to confirm and closes the game while it installs the update (settings and saves stay).",
                    latest, date, size / 1048576.0);
-#else
+#  else
     else set_state(UPD_AVAILABLE, "Version %s is out (published %s). Update now downloads %.1f MB from GitHub, checks it and "
                    "replaces this program (with its " DOCS_TEXT "); settings, saves and the ROM stay as they are.",
                    latest, date, size / 1048576.0);
+#  endif
 #endif
 }
 
@@ -826,7 +957,149 @@ static uint8_t *download(size_t *len, char hex[65], char *why, size_t cap) {
 
 /* ---- install ---- */
 
-#ifndef __ANDROID__
+#if defined(__APPLE__)
+static int g_kept_old;               /* the last installation kept the previous app: 1 as <app>.old, 2 in the Trash */
+
+/* a Mac program: universal (both kinds of Mac), or 64-bit for one of them */
+static int is_macho(const uint8_t *p, size_t n) {
+    uint32_t be = n >= 4 ? (uint32_t)p[0] << 24 | (uint32_t)p[1] << 16 | (uint32_t)p[2] << 8 | p[3] : 0;
+    return be == 0xCAFEBABEu || be == 0xCAFEBABFu || be == 0xCFFAEDFEu;
+}
+
+/* a path inside the app as the package gives it: names separated by '/', none of them "." or "..",
+   nothing absolute, no backslashes or control characters */
+static int safe_path(const char *rel) {
+    const char *seg = rel;
+    if (!rel[0]) return 0;
+    for (const char *p = rel;; p++) {
+        if (*p == '/' || !*p) {
+            size_t n = (size_t)(p - seg);
+            if (n == 0 || (n == 1 && seg[0] == '.') || (n == 2 && seg[0] == '.' && seg[1] == '.')) return 0;
+            if (!*p) return 1;
+            seg = p + 1;
+        } else if (*p == '\\' || (unsigned char)*p < 0x20) {
+            return 0;
+        }
+    }
+}
+
+typedef struct {
+    const uint8_t *zip;
+    size_t len;
+    const char *dest;                /* the new app's folder, <app>.new */
+    char *why;
+    size_t cap;
+    int has_program, has_plist;
+} unpack_job;
+
+/* zip_each: one entry of the package; those of the app are written under dest. Non-zero (with the
+   reason in why) stops the unpacking. */
+static int unpack_entry(void *ctx, const char *name, size_t n, unsigned mode) {
+#define STOP(...) do { failed(j->why, j->cap, __VA_ARGS__); return 1; } while (0)
+    unpack_job *j = (unpack_job *)ctx;
+    static const char prefix[] = PACKAGE_DIR "/" MAC_APP "/";
+    const size_t pl = sizeof prefix - 1;
+    char entry[700], rel[700], path[1300], parent[1300];
+    if (n <= pl || memcmp(name, prefix, pl) != 0) return 0;          /* not inside the app (the notes, the folders) */
+    if (n >= sizeof entry) STOP("the package holds a name that is too long");
+    memcpy(entry, name, n);
+    entry[n] = '\0';
+    int folder = entry[n - 1] == '/';
+    snprintf(rel, sizeof rel, "%.*s", (int)(n - pl - (folder ? 1 : 0)), entry + pl);
+    if (!safe_path(rel)) STOP("the package holds a name that is not allowed (%.100s)", rel);
+    if ((mode & S_IFMT) == S_IFLNK) STOP("the package holds a link (%.100s)", rel);
+    snprintf(path, sizeof path, "%s/%s", j->dest, rel);
+    if (folder) {
+        if (!make_dirs(path)) STOP("%.100s could not be made (%s)", rel, strerror(errno));
+        return 0;
+    }
+    size_t dlen = 0;
+    uint8_t *data = zip_entry(j->zip, j->len, entry, &dlen);
+    if (!data) STOP("%.100s in the package is damaged", rel);
+    int program = (mode & 0111) != 0;
+    if (!strcmp(rel, "Contents/MacOS/" BINARY)) {
+        if (!is_macho(data, dlen)) { free(data); STOP("the package's " BINARY " is not a Mac program"); }
+        program = 1;
+        j->has_program = 1;
+    }
+    if (!strcmp(rel, "Contents/Info.plist")) j->has_plist = 1;
+    folder_of(path, parent, sizeof parent);
+    int ok = make_dirs(parent) && f_write(path, data, dlen, program);
+    free(data);
+    if (!ok) STOP("%.100s could not be written beside the app (%s)", rel, strerror(errno));
+    return 0;
+#undef STOP
+}
+
+/* the package's app, written as the new folder dest */
+static int unpack_app(const uint8_t *zip, size_t len, const char *dest, char *why, size_t cap) {
+    unpack_job j = { zip, len, dest, why, cap, 0, 0 };
+    if (mkdir(dest, 0755) != 0) return failed(why, cap, "the new version could not be written beside this one (%s)", strerror(errno));
+    int r = zip_each(zip, len, unpack_entry, &j);
+    if (r < 0) return failed(why, cap, "the package is damaged");
+    if (r > 0) return 0;
+    if (!j.has_program || !j.has_plist) return failed(why, cap, "the package holds no usable %s", MAC_APP);
+    return 1;
+}
+
+static void sync_folder(const char *dir) {
+    int fd = open(dir[0] ? dir : ".", O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+    if (fd >= 0) { fsync(fd); close(fd); }
+}
+
+/* worker thread: the package's app into this one's place, as the file comment describes. The new app is
+   written in full beside this one first, then the notes take their place (where the app has them beside
+   it), then the app; nothing is replaced when anything before that fails. */
+static int install(char *why, size_t cap) {
+    char hex[65], app[1024], dir[1100], newapp[1100], oldapp[1100], doc[1200], docnew[1200];
+    uint8_t *pkg, *readme;
+    size_t len = 0, readme_len = 0;
+    int ok = 0, written = 1, have_doc;
+    g_kept_old = 0;
+    if (!app_of(g_exe, app, sizeof app)) return failed(why, cap, "this program is not inside its app");
+    pkg = download(&len, hex, why, cap);
+    if (!pkg) return 0;
+    snprintf(newapp, sizeof newapp, "%s.new", app);
+    snprintf(oldapp, sizeof oldapp, "%s.old", app);
+    folder_of(app, dir, sizeof dir);
+    remove_tree(newapp);
+    if (!unpack_app(pkg, len, newapp, why, cap)) { free(pkg); remove_tree(newapp); return 0; }
+    readme = zip_entry(pkg, len, PACKAGE_DIR "/README.txt", &readme_len);
+    free(pkg);
+    snprintf(doc, sizeof doc, "%sREADME.txt", dir);
+    snprintf(docnew, sizeof docnew, "%sREADME.txt.new", dir);
+    have_doc = readme && f_exists(doc);          /* the package's folder: README.txt beside the app */
+    if (have_doc) written = f_write(docnew, readme, readme_len, 0);
+    free(readme);
+
+    if (g_swap) SDL_LockMutex(g_swap);
+    if (!written) {
+        failed(why, cap, "README.txt could not be written beside the app (%s)", strerror(errno));
+    } else if (SDL_AtomicGet(&g_cancel)) {
+        failed(why, cap, "the program is closing");
+    } else {
+        remove_tree(oldapp);                     /* one an earlier update could not put in the Trash */
+        if (f_exists(oldapp)) failed(why, cap, "%s.old is in the way", name_in(app));
+        else if (have_doc && !f_replace(docnew, doc)) failed(why, cap, "README.txt could not be replaced (%s)", strerror(errno));
+        else if (rename(app, oldapp) != 0) failed(why, cap, "the app could not be moved aside (%s)", strerror(errno));
+        else if (rename(newapp, app) != 0) {
+            int e = errno;
+            rename(oldapp, app);
+            failed(why, cap, "the new version could not take the app's place (%s)", strerror(e));
+        } else {
+            sync_folder(dir);
+            ok = 1;
+            g_kept_old = macos_trash(oldapp) ? 2 : 1;
+        }
+    }
+    if (!ok) {                                   /* the new files that did not take their places */
+        remove_tree(newapp);
+        if (have_doc) f_remove(docnew);
+    }
+    if (g_swap) SDL_UnlockMutex(g_swap);
+    return ok;
+}
+#elif !defined(__ANDROID__)
 static int g_kept_old;               /* the last installation kept the previous program as <name>.old */
 
 /* a malloc'd copy of the package's file PACKAGE_DIR/name (arc: the zip on Windows, the unpacked tar
@@ -1002,8 +1275,18 @@ static int SDLCALL install_worker(void *arg) {
         set_state(UPD_FAILED, "Version %s was not installed: %s.", latest, why);
 #ifndef __ANDROID__
 #  define INSTALLED "Version %s is installed. Restart now to use it (a game in progress ends), or it starts the next time you open the game."
+#  ifdef __APPLE__
+    else if (g_kept_old == 2)
+        set_state(UPD_INSTALLED, INSTALLED " The previous version is in the Trash.", latest);
+    else if (g_kept_old) {
+        char app[1024];
+        set_state(UPD_INSTALLED, INSTALLED " The previous version is kept as %s.old.", latest,
+                  app_of(g_exe, app, sizeof app) ? name_in(app) : MAC_APP);
+    }
+#  else
     else if (g_kept_old)
         set_state(UPD_INSTALLED, INSTALLED " The previous version is kept as %s.old.", latest, g_exe[0] ? name_in(g_exe) : BINARY);
+#  endif
     else
         set_state(UPD_INSTALLED, INSTALLED, latest);
 #  undef INSTALLED
@@ -1030,9 +1313,19 @@ void updater_startup(void) {
 #else
     if (g_exe[0]) {                  /* the new files of an update that did not finish */
         char dir[sizeof g_exe];
-        snprintf(path, sizeof path, "%s.new", g_exe);
-        if (f_exists(path)) f_remove(path);
-        folder_of(g_exe, dir, sizeof dir);
+#  ifdef __APPLE__
+        char app[1024];
+        if (app_of(g_exe, app, sizeof app)) {
+            snprintf(path, sizeof path, "%s.new", app);
+            remove_tree(path);
+            folder_of(app, dir, sizeof dir);
+        } else
+#  endif
+        {
+            snprintf(path, sizeof path, "%s.new", g_exe);
+            if (f_exists(path)) f_remove(path);
+            folder_of(g_exe, dir, sizeof dir);
+        }
         for (size_t k = 0; k < N_DOCS; k++) {
             snprintf(path, sizeof path, "%s%s.new", dir, doc_names[k]);
             if (f_exists(path)) f_remove(path);
@@ -1124,6 +1417,26 @@ int updater_restart(char **argv) {
     (void)argv;
     return 0;
 #else
+#  ifdef __APPLE__
+    char app[1024];
+    if (app_of(g_exe, app, sizeof app)) {
+        /* a new instance of the app through Launch Services, as the Finder opens one; this one then ends */
+        char *args[40];
+        int k = 0, status = 0;
+        pid_t pid;
+        args[k++] = (char *)"/usr/bin/open";
+        args[k++] = (char *)"-n";
+        args[k++] = app;
+        if (argv && argv[0] && argv[1]) {
+            args[k++] = (char *)"--args";
+            for (int i = 1; argv[i] && k < 39; i++) args[k++] = argv[i];
+        }
+        args[k] = NULL;
+        if (posix_spawn(&pid, "/usr/bin/open", NULL, NULL, args, environ) != 0) return 0;
+        while (waitpid(pid, &status, 0) < 0 && errno == EINTR) {}
+        return WIFEXITED(status) && WEXITSTATUS(status) == 0;
+    }
+#  endif
     execv(g_exe, argv);
     fprintf(stderr, "restart: %s: %s\n", g_exe, strerror(errno));
     return 0;

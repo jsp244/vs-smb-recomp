@@ -1,0 +1,77 @@
+# Builds and tests the macOS package on GitHub's Macs with tools/macos/build.sh.
+#
+# The build recompiles the owner's own copy of the game, which is not in this repository: the job
+# reads it from a private repository with a read-only deploy key (the secret ROMS_DEPLOY_KEY). The
+# package and the test pictures contain what was made from it, so they leave the job only
+# encrypted with the secret PACKAGE_KEY (openssl enc -aes-256-cbc -pbkdf2), as the artifact
+# macos-build. Releases are put together from it by hand, as for the other systems.
+name: macOS
+
+on:
+  push:
+    branches: [macos]
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0              # git describe needs the tags
+
+      - name: The game's ROM, from the private repository
+        env:
+          ROMS_DEPLOY_KEY: ${{ secrets.ROMS_DEPLOY_KEY }}
+        run: |
+          set -e
+          umask 077
+          printf '%s\n' "$ROMS_DEPLOY_KEY" > "$RUNNER_TEMP/roms_key"
+          echo "github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl" > "$RUNNER_TEMP/known_hosts"
+          GIT_SSH_COMMAND="ssh -i $RUNNER_TEMP/roms_key -o IdentitiesOnly=yes -o UserKnownHostsFile=$RUNNER_TEMP/known_hosts" \
+            git clone -q --depth 1 git@github.com:jsp244/recomp-roms.git "$RUNNER_TEMP/roms"
+          rm -f "$RUNNER_TEMP/roms_key"
+          cp "$RUNNER_TEMP/roms/vs-smb/"*.nes rom/
+          rm -rf "$RUNNER_TEMP/roms"
+          ls rom
+
+      - name: SDL2 for both kinds of Mac (cached)
+        uses: actions/cache@v6
+        with:
+          path: ~/sdl2-2.32.10-universal
+          key: sdl2-2.32.10-universal-macos11-${{ runner.os }}
+
+      - name: Rosetta, to test the Intel half of the program
+        run: /usr/bin/arch -x86_64 /usr/bin/true 2>/dev/null || sudo softwareupdate --install-rosetta --agree-to-license
+
+      - name: Build and test
+        run: |
+          set -e
+          make recomp PYTHON=python3
+          export VSSMB_VERSION="$(git describe --tags --match 'v[0-9]*' --dirty)" VSSMB_REPO="$GITHUB_REPOSITORY"
+          sh tools/macos/build.sh
+
+      - name: Encrypt the package and the test pictures
+        env:
+          PACKAGE_KEY: ${{ secrets.PACKAGE_KEY }}
+        run: |
+          set -e
+          OPENSSL="$(brew --prefix openssl@3)/bin/openssl"
+          tar -czf - dist/vssmb-macos.zip shots | "$OPENSSL" enc -aes-256-cbc -pbkdf2 -iter 200000 -salt -pass env:PACKAGE_KEY -out macos-build.bin
+          rm -f rom/*.nes rom/*.zip
+          ls -l macos-build.bin
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: macos-build
+          path: macos-build.bin
+          retention-days: 7

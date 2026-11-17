@@ -3,18 +3,19 @@
 #   make headless        headless test harness (interpreter only)
 #   make recomp          run the recompiler on rom/*.nes -> generated/
 #   make vssmb           native game executable (needs generated/ and SDL2)
+#   make app             macOS: the game as an app (VS. Super Mario Bros.app)
 #   make test            CPU/PPU/APU/mapper regression tests
 #
 # Requires: a C11 compiler, GNU make, Python 3; SDL2 for the frontend.
 
+# Windows detection: $(OS) is set by cmd/PowerShell, uname by MSYS2/MinGW shells
+UNAME := $(shell uname -s 2>/dev/null)
 ifeq ($(origin CC),default)
-  CC := gcc
+  CC := $(if $(filter Darwin,$(UNAME)),clang,gcc)
 endif
 PYTHON  ?= python
 CFLAGS  ?= -O2 -std=gnu11 -Wall -Wextra -Wno-unused-parameter -Wno-unused-function -Wno-missing-field-initializers
 LDFLAGS ?=
-# Windows detection: $(OS) is set by cmd/PowerShell, uname by MSYS2/MinGW shells
-UNAME := $(shell uname -s 2>/dev/null)
 ifneq (,$(findstring Windows_NT,$(OS))$(findstring MINGW,$(UNAME))$(findstring MSYS,$(UNAME)))
   WINDOWS := 1
   EXE := .exe
@@ -22,6 +23,7 @@ else
   WINDOWS := 0
   EXE :=
 endif
+MACOS := $(if $(filter Darwin,$(UNAME)),1,0)
 
 # first .nes (or MAME's suprmrio.zip) in rom/ (filenames may contain spaces, so avoid $(firstword))
 ROM     ?= $(shell ls rom/*.nes rom/*.zip 2>/dev/null | head -n 1)
@@ -44,6 +46,16 @@ ifeq ($(WINDOWS),1)
   # otherwise stop the program with error 0xc000007b
   SDL_LIBS := -static $(shell $(SDL_CONFIG) --static-libs 2>/dev/null) -lcomdlg32 -ldxgi -static-libgcc
   PLATFORM := win64
+  ARCHIVE := zip
+else ifeq ($(MACOS),1)
+  # one program for Apple silicon and Intel Macs (MAC_ARCHS) on macOS 11 or newer, with SDL2 linked in:
+  # tools/macos/build.sh builds SDL2 that way, for the same Macs. `make app` / `make dist` put it in an app.
+  MAC_ARCHS ?= -arch arm64 -arch x86_64
+  MAC_MIN ?= 11.0
+  CFLAGS += $(MAC_ARCHS) -mmacosx-version-min=$(MAC_MIN)
+  LDFLAGS += $(MAC_ARCHS) -mmacosx-version-min=$(MAC_MIN)
+  SDL_LIBS := $(shell $(SDL_CONFIG) --static-libs 2>/dev/null)
+  PLATFORM := macos
   ARCHIVE := zip
 else
   ifeq ($(SDL_STATIC),1)
@@ -71,6 +83,10 @@ FRONTEND_OBJ := $(patsubst frontend/%.c,$(BUILD)/fe_%.o,$(FRONTEND_SRC))
 #      also starts on systems without it (the Updates tab then says so)
 ifeq ($(WINDOWS),1)
   HTTP_LIBS := -lwinhttp
+else ifeq ($(MACOS),1)
+  # macOS has libcurl itself, and its headers in the SDK
+  HTTP_CFLAGS := -DHTTP_CURL
+  HTTP_LIBS := -lcurl
 else ifneq ($(shell pkg-config --exists libcurl 2>/dev/null && echo yes),)
   HTTP_CFLAGS := -DHTTP_CURL_DLOPEN $(shell pkg-config --cflags libcurl)
   HTTP_LIBS := -ldl -lpthread
@@ -98,8 +114,15 @@ ifeq ($(WINDOWS),1)
   WINDRES ?= windres
   FRONTEND_OBJ += $(BUILD)/fe_resources.o
 endif
+ifeq ($(MACOS),1)
+  # the open-file panel and the Trash (Cocoa)
+  FRONTEND_OBJ += $(BUILD)/fe_macos.o
+endif
+# the app's version for macOS (Info.plist): the numbers of VSSMB_VERSION
+MAC_VERSION = $(or $(shell echo '$(VSSMB_VERSION)' | sed -n -E 's/^v?([0-9]+(\.[0-9]+){0,2}).*/\1/p'),0.0.0)
+MAC_APP_DIR = $(BUILD)/app/VS. Super Mario Bros.app
 
-.PHONY: all headless recomp vssmb test cosim dist clean
+.PHONY: all headless recomp vssmb app test cosim dist clean
 
 all: headless
 
@@ -149,16 +172,33 @@ $(BUILD)/fe_resources.o: frontend/vssmb.rc frontend/vssmb.ico
 	@mkdir -p $(BUILD)
 	$(WINDRES) -I frontend $< -O coff -o $@
 
-# ---- distributable package: the executable plus the player notes (the in-app update writes the
-#      notes too: frontend/updater.c's doc_names), and in the Deck edition add-to-steam.py, made
-#      executable here (git stores it as 100644, and cp keeps that) ----
-dist: $(BUILD)/vssmb$(EXE)
+$(BUILD)/fe_macos.o: frontend/macos.m frontend/macos.h
+	@mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) -fobjc-arc $(SDL_CFLAGS) -c $< -o $@
+
+# ---- macOS: the app (Info.plist from tools/macos/Info.plist with this version, the icon), signed ad hoc
+#      as Apple silicon requires; nothing is written into it later (settings and saves go to Application
+#      Support, and an update replaces the whole app) ----
+app: $(BUILD)/vssmb$(EXE)
+	rm -rf "$(BUILD)/app" && mkdir -p "$(MAC_APP_DIR)/Contents/MacOS" "$(MAC_APP_DIR)/Contents/Resources"
+	cp $(BUILD)/vssmb "$(MAC_APP_DIR)/Contents/MacOS/vssmb"
+	cp frontend/vssmb.icns "$(MAC_APP_DIR)/Contents/Resources/vssmb.icns"
+	cp docs/PLAYERS.md "$(MAC_APP_DIR)/Contents/Resources/README.txt"
+	sed 's/@VERSION@/$(MAC_VERSION)/g' tools/macos/Info.plist > "$(MAC_APP_DIR)/Contents/Info.plist"
+	printf 'APPL????' > "$(MAC_APP_DIR)/Contents/PkgInfo"
+	codesign --force --sign - --timestamp=none "$(MAC_APP_DIR)"
+	@echo "app: $(MAC_APP_DIR) (version $(MAC_VERSION))"
+
+# ---- distributable package: the executable (on macOS the app) plus the player notes (the in-app
+#      update writes the notes too: frontend/updater.c's doc_names), and in the Deck edition
+#      add-to-steam.py, made executable here (git stores it as 100644, and cp keeps that) ----
+dist: $(if $(filter 1,$(MACOS)),app,$(BUILD)/vssmb$(EXE))
 	rm -rf dist/vssmb && mkdir -p dist/vssmb
-	cp $(BUILD)/vssmb$(EXE) dist/vssmb/
+	@if [ "$(MACOS)" = 1 ]; then cp -R "$(MAC_APP_DIR)" dist/vssmb/; else cp $(BUILD)/vssmb$(EXE) dist/vssmb/; fi
 	cp docs/PLAYERS.md dist/vssmb/README.txt
 	@test "$(DECK_EDITION)" != 1 || cp docs/STEAMDECK.md dist/vssmb/STEAMDECK.txt
 	@test "$(DECK_EDITION)" != 1 || { cp tools/steamdeck/add-to-steam.py dist/vssmb/ && chmod 755 dist/vssmb/add-to-steam.py; }
-	@test "$(WINDOWS)" = 1 || cp frontend/icon_preview.png dist/vssmb/vssmb.png
+	@test "$(WINDOWS)" = 1 || test "$(MACOS)" = 1 || cp frontend/icon_preview.png dist/vssmb/vssmb.png
 	$(PYTHON) -c "import shutil; shutil.make_archive('dist/vssmb-$(PLATFORM)', '$(ARCHIVE)', 'dist', 'vssmb')"
 	@echo "package: dist/vssmb-$(PLATFORM).$(if $(filter zip,$(ARCHIVE)),zip,tar.gz)"
 
