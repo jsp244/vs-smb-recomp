@@ -105,10 +105,9 @@ ifeq ($(origin VSSMB_REPO),undefined)
 endif
 UPDATE_DEFS := -DVSSMB_VERSION=\"$(VSSMB_VERSION)\" -DVSSMB_REPO=\"$(VSSMB_REPO)\" \
                -DVSSMB_PACKAGE=\"vssmb-$(PLATFORM).$(if $(filter zip,$(ARCHIVE)),zip,tar.gz)\"
-ifneq ($(UPDATE_DEFS),$(file <$(BUILD)/updater-defs.txt))
-  $(shell mkdir -p $(BUILD))
-  $(file >$(BUILD)/updater-defs.txt,$(UPDATE_DEFS))
-endif
+# (the shell writes it: the make macOS comes with, 3.81, has no $(file ...))
+UPDATE_STAMP := $(shell mkdir -p $(BUILD) && [ "$$(cat $(BUILD)/updater-defs.txt 2>/dev/null)" = '$(UPDATE_DEFS)' ] || \
+                  printf '%s\n' '$(UPDATE_DEFS)' > $(BUILD)/updater-defs.txt)
 ifeq ($(WINDOWS),1)
   # executable icon + version info (Explorer, taskbar)
   WINDRES ?= windres
