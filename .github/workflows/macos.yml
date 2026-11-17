@@ -12,6 +12,11 @@ on:
     branches: [macos]
     tags: ['v*']
   workflow_dispatch:
+    inputs:
+      update_test_from:
+        description: 'Also let the built app install the published release over itself, as if it were this version (e.g. 1.3.0)'
+        required: false
+        default: ''
 
 permissions:
   contents: read
@@ -54,6 +59,8 @@ jobs:
         run: /usr/bin/arch -x86_64 /usr/bin/true 2>/dev/null || sudo softwareupdate --install-rosetta --agree-to-license
 
       - name: Build and test
+        env:
+          UPDATE_TEST_FROM: ${{ github.event.inputs.update_test_from }}
         run: |
           set -e
           make recomp PYTHON=python3

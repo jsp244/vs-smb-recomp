@@ -118,4 +118,25 @@ if [ -n "$ROM" ]; then
     rm -rf "$SUPPORT"
 fi
 rm -rf "$U"
+
+# UPDATE_TEST_FROM=<version> (the workflow's manual run): the app as packaged here, pretending to be that
+# version, installs the published release over itself with its own Updates tab and starts it again
+if [ -n "$UPDATE_TEST_FROM" ]; then
+    echo "== the published release, installed by the app's Updates tab as if it were version $UPDATE_TEST_FROM"
+    T=$(mktemp -d)
+    ditto -x -k dist/vssmb-macos.zip "$T"
+    TAPP="$T/vssmb/VS. Super Mario Bros.app"
+    PROBE="$PWD/shots/after-update.txt"
+    rm -f "$PROBE"
+    "$TAPP/Contents/MacOS/vssmb" --update-test "$UPDATE_TEST_FROM" --list-modes "$PROBE" | grep '^update:'
+    for i in $(seq 1 30); do [ -s "$PROBE" ] && break; sleep 1; done
+    test -s "$PROBE" && echo "the installed version started (it wrote $PROBE)"
+    test ! -e "$TAPP.new" && test ! -e "$TAPP.update" && echo "nothing left beside the app"
+    ls "$HOME/.Trash" | grep -F "VS. Super Mario Bros.app.old" && echo "the previous app is in the Trash"
+    codesign --verify --deep --strict "$TAPP" && echo "the installed app's signature is intact"
+    curl -fsSL -o "$T/release.zip" "https://github.com/$VSSMB_REPO/releases/latest/download/vssmb-macos.zip"
+    test "$(unzip -p "$T/release.zip" "vssmb/VS. Super Mario Bros.app/Contents/MacOS/vssmb" | shasum -a 256 | cut -c1-64)" = \
+         "$(shasum -a 256 "$TAPP/Contents/MacOS/vssmb" | cut -c1-64)" && echo "the installed program is the release's, byte for byte"
+    rm -rf "$T"
+fi
 ls -l dist/
