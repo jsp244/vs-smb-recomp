@@ -27,7 +27,7 @@ if [ ! -x "$SDL_PREFIX/bin/sdl2-config" ]; then
     rm -rf "$t"
 fi
 export PATH="$SDL_PREFIX/bin:$PATH"
-SDL_STATIC_LIBS=$(sdl2-config --static-libs)
+SDL_STATIC_LIBS=$(sdl2-config --static-libs | sed -e 's/ -lm / /g' -e 's/ -lm$//')   # the test scripts add -lm themselves
 M="make -j$J PYTHON=python3"
 
 echo "== version ${VSSMB_VERSION:-dev}, repository ${VSSMB_REPO:-(none)}"
@@ -46,9 +46,9 @@ if [ -n "$ROM" ]; then
     python3 tests/cosim.py --frames 3000
     python3 tests/cosim.py --frames 3000 --reset 2000
     python3 tests/cosim.py --walk 42
-    echo "== self-tests with SDL's offscreen video and dummy audio drivers"
+    echo "== self-tests with SDL's offscreen video, software renderer and dummy audio drivers"
     (
-        export SDL_VIDEODRIVER=offscreen SDL_AUDIODRIVER=dummy
+        export SDL_VIDEODRIVER=offscreen SDL_RENDER_DRIVER=software SDL_AUDIODRIVER=dummy   # (no OpenGL offscreen on a Mac)
         B=./build-mac/vssmb
         $B "$ROM" --selftest 300 shots/selftest.png | grep selftest
         $B --trigger-test | tail -n 1

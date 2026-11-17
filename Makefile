@@ -54,7 +54,7 @@ else ifeq ($(MACOS),1)
   MAC_MIN ?= 11.0
   CFLAGS += $(MAC_ARCHS) -mmacosx-version-min=$(MAC_MIN)
   LDFLAGS += $(MAC_ARCHS) -mmacosx-version-min=$(MAC_MIN)
-  SDL_LIBS := $(shell $(SDL_CONFIG) --static-libs 2>/dev/null)
+  SDL_LIBS := $(filter-out -lm,$(shell $(SDL_CONFIG) --static-libs 2>/dev/null))   # -lm comes at the end of the link anyway
   PLATFORM := macos
   ARCHIVE := zip
 else
