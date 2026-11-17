@@ -77,8 +77,9 @@ $M BUILD=build-mac dist
 APP="build-mac/app/VS. Super Mario Bros.app"
 printf 'architectures: '; lipo -archs "$APP/Contents/MacOS/vssmb"
 echo "== the libraries it needs: macOS's own only"
-otool -L "$APP/Contents/MacOS/vssmb" | tail -n +2
-if otool -L "$APP/Contents/MacOS/vssmb" | tail -n +2 | grep -v -E '^[[:space:]]+(/usr/lib/|/System/Library/)'; then
+LIBS=$(otool -L "$APP/Contents/MacOS/vssmb" | grep -E '^[[:space:]]' | sort -u)   # (one list per architecture)
+echo "$LIBS"
+if echo "$LIBS" | grep -v -E '^[[:space:]]+(/usr/lib/|/System/Library/)'; then
     echo "a library that is not part of macOS (above)"; exit 1
 fi
 echo "== the oldest macOS it runs on"

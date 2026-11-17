@@ -52,7 +52,9 @@ else ifeq ($(MACOS),1)
   # tools/macos/build.sh builds SDL2 that way, for the same Macs. `make app` / `make dist` put it in an app.
   MAC_ARCHS ?= -arch arm64 -arch x86_64
   MAC_MIN ?= 11.0
-  CFLAGS += $(MAC_ARCHS) -mmacosx-version-min=$(MAC_MIN)
+  # -ffp-contract=off: no fused multiply-adds, which only Apple silicon has, so both halves (and the
+  # other systems' builds) compute every colour and sample alike
+  CFLAGS += $(MAC_ARCHS) -mmacosx-version-min=$(MAC_MIN) -ffp-contract=off
   LDFLAGS += $(MAC_ARCHS) -mmacosx-version-min=$(MAC_MIN)
   SDL_LIBS := $(filter-out -lm,$(shell $(SDL_CONFIG) --static-libs 2>/dev/null))   # -lm comes at the end of the link anyway
   PLATFORM := macos
