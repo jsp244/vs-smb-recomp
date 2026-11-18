@@ -3,23 +3,23 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>VS. Super Mario Bros. native port for Windows, Linux, Steam Deck and Android</title>
-<meta name="description" content="Nintendo's 1986 arcade game VS. Super Mario Bros. as a native Windows, Linux, Steam Deck and Android program, made by static recompilation. Bring your own dump.">
+<title>VS. Super Mario Bros. native port for Windows, macOS, Linux, Steam Deck and Android</title>
+<meta name="description" content="Nintendo's 1986 arcade game VS. Super Mario Bros. as a native Windows, macOS, Linux, Steam Deck and Android program, made by static recompilation. Bring your own dump.">
 <link rel="canonical" href="https://jsp244.github.io/vs-smb-recomp/">
 <meta name="color-scheme" content="light dark">
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="VS. Super Mario Bros. native port">
 <meta property="og:title" content="VS. Super Mario Bros. native port">
-<meta property="og:description" content="Nintendo's 1986 arcade game as a native Windows, Linux, Steam Deck and Android program, made by static recompilation. Bring your own dump.">
+<meta property="og:description" content="Nintendo's 1986 arcade game as a native Windows, macOS, Linux, Steam Deck and Android program, made by static recompilation. Bring your own dump.">
 <meta property="og:url" content="https://jsp244.github.io/vs-smb-recomp/">
 <script type="application/ld+json">
 {
   "@context": "https://schema.org",
   "@type": "SoftwareApplication",
   "name": "VS. Super Mario Bros. native port",
-  "description": "Nintendo's 1986 arcade game VS. Super Mario Bros. as a native Windows, Linux, Steam Deck and Android program, made by static recompilation. Bring your own dump.",
+  "description": "Nintendo's 1986 arcade game VS. Super Mario Bros. as a native Windows, macOS, Linux, Steam Deck and Android program, made by static recompilation. Bring your own dump.",
   "applicationCategory": "GameApplication",
-  "operatingSystem": "Windows, Linux, SteamOS, Android",
+  "operatingSystem": "Windows, macOS, Linux, SteamOS, Android",
   "url": "https://jsp244.github.io/vs-smb-recomp/",
   "downloadUrl": "https://github.com/jsp244/vs-smb-recomp/releases/latest",
   "license": "https://github.com/jsp244/vs-smb-recomp/blob/main/LICENSE",
@@ -82,7 +82,7 @@ footer { color: var(--muted); font-size: .9rem; border-top: 1px solid var(--line
 <header>
   <p class="kicker">Unofficial fan project · open source (MIT)</p>
   <h1>VS. Super Mario Bros. native port</h1>
-  <p class="lede">Nintendo's 1986 arcade game, VS. Super Mario Bros., as a native program for Windows, Linux, the Steam Deck and Android. Its 6502 program is statically recompiled into C and runs on a small runtime that recreates the Vs. System board.</p>
+  <p class="lede">Nintendo's 1986 arcade game, VS. Super Mario Bros., as a native program for Windows, macOS, Linux, the Steam Deck and Android. Its 6502 program is statically recompiled into C and runs on a small runtime that recreates the Vs. System board.</p>
   <p class="actions">
     <a class="btn primary" href="https://github.com/jsp244/vs-smb-recomp/releases/latest">Download the latest release</a>
     <a class="btn" href="https://github.com/jsp244/vs-smb-recomp">Source code on GitHub</a>
@@ -112,24 +112,25 @@ footer { color: var(--muted); font-size: .9rem; border-top: 1px solid var(--line
     <thead><tr><th>System</th><th>Package</th></tr></thead>
     <tbody>
       <tr><td>Windows (64-bit)</td><td><a href="https://github.com/jsp244/vs-smb-recomp/releases/latest/download/vssmb-win64.zip">vssmb-win64.zip</a>: unzip it and run <code>vssmb.exe</code></td></tr>
+      <tr><td>macOS 11 or newer (Apple silicon and Intel)</td><td><a href="https://github.com/jsp244/vs-smb-recomp/releases/latest/download/vssmb-macos.zip">vssmb-macos.zip</a>: unzip it and move the app to Applications</td></tr>
       <tr><td>Linux (x86-64, glibc 2.34 or newer)</td><td><a href="https://github.com/jsp244/vs-smb-recomp/releases/latest/download/vssmb-linux-x86_64.tar.gz">vssmb-linux-x86_64.tar.gz</a></td></tr>
       <tr><td>Steam Deck</td><td><a href="https://github.com/jsp244/vs-smb-recomp/releases/latest/download/vssmb-steamdeck.tar.gz">vssmb-steamdeck.tar.gz</a>: setup in <code>STEAMDECK.txt</code> inside</td></tr>
       <tr><td>Android handhelds with built-in controls</td><td><a href="https://github.com/jsp244/vs-smb-recomp/releases/latest/download/vssmb-android-handheld.apk">vssmb-android-handheld.apk</a></td></tr>
       <tr><td>Android phones and tablets (on-screen controls)</td><td><a href="https://github.com/jsp244/vs-smb-recomp/releases/latest/download/vssmb-android-phone.apk">vssmb-android-phone.apk</a></td></tr>
     </tbody>
   </table>
-  <p>The Android apps need Android 7 or newer. <a href="https://github.com/jsp244/vs-smb-recomp/releases/latest/download/SHA256SUMS">SHA256SUMS</a> lists each package's SHA-256. What changed in each version: the <a href="https://github.com/jsp244/vs-smb-recomp/releases">release notes</a>.</p>
+  <p>The Mac app isn't signed through Apple's developer program: the first time you open it, choose <em>Open Anyway</em> under System Settings &gt; Privacy &amp; Security (needed once). The Android apps need Android 7 or newer. <a href="https://github.com/jsp244/vs-smb-recomp/releases/latest/download/SHA256SUMS">SHA256SUMS</a> lists each package's SHA-256. What changed in each version: the <a href="https://github.com/jsp244/vs-smb-recomp/releases">release notes</a>.</p>
 </section>
 
 <section id="getting-started">
   <h2>Getting started</h2>
   <ol>
-    <li>Run <code>vssmb.exe</code> on Windows or <code>vssmb</code> on Linux. On the Steam Deck follow <code>STEAMDECK.txt</code>; on Android install the APK and open it.</li>
-    <li>On the ROM tab choose <em>Choose ROM file...</em> and pick your <code>.nes</code> or <code>.zip</code> file, or drop it onto the window.</li>
+    <li>Run <code>vssmb.exe</code> on Windows, the app on a Mac, or <code>vssmb</code> on Linux. On the Steam Deck follow <code>STEAMDECK.txt</code>; on Android install the APK and open it.</li>
+    <li>On the ROM tab choose <em>Choose ROM file...</em> and pick your <code>.nes</code> or <code>.zip</code> file, or drop it onto the window (on a Mac also onto the app's icon).</li>
     <li>Go to Play &gt; Start game. The chosen file is remembered.</li>
     <li>The cabinet starts on its PUSH BUTTON screen: press Start for one player (the 2 key starts a two-player game).</li>
   </ol>
-  <p>Player guides: <a href="https://github.com/jsp244/vs-smb-recomp/blob/main/docs/PLAYERS.md">Windows and Linux</a>, <a href="https://github.com/jsp244/vs-smb-recomp/blob/main/docs/STEAMDECK.md">Steam Deck</a>, <a href="https://github.com/jsp244/vs-smb-recomp/blob/main/docs/ANDROID.md">Android</a>.</p>
+  <p>Player guides: <a href="https://github.com/jsp244/vs-smb-recomp/blob/main/docs/PLAYERS.md">Windows, macOS and Linux</a>, <a href="https://github.com/jsp244/vs-smb-recomp/blob/main/docs/STEAMDECK.md">Steam Deck</a>, <a href="https://github.com/jsp244/vs-smb-recomp/blob/main/docs/ANDROID.md">Android</a>.</p>
 </section>
 
 <section id="how-it-is-made">
