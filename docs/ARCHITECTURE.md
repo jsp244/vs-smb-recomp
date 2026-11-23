@@ -460,6 +460,21 @@ columns of solid blocks, so those floors are drawn as blocks; it is the only cha
 look, not of shape, between its levels and SMB's besides the row-15 objects. The pairs
 the fallback mapping learns come from the plain columns.
 
+**The ground's edges at a gap.** These come from All-Stars' renderer, not its data. In a
+ground or underground area that is not a cloud one, it ends each 8-pixel column with
+$04:8D71, which reads the column's tile at the top of the floor's first row: $0024 or
+$10A4 is a gap, $0A08 (the floor top's left tile) is ground. At the first gap column
+after ground it writes the floor's right end over the column before (four tiles down rows
+11 and 12), at the first ground column after a gap the floor's left end over that column,
+but not at the first nametable's first column in an area entered at its first page (where
+$43-$44 is 0). Its state ($0ECE, $0ECF) is set by the intermission only, so it runs on
+through the areas a level's pipes and vines join, unchanged in those it does not run in
+(water, castles, clouds). The port keeps the state each area began in with the area's
+start (`pit_carry_in`: as the intermission left it when VS.'s DisplayIntermediate shows
+it, else as the area before left it) and draws the ends over the cells that still hold the
+parser's metatiles, from the nearest column half before each that is a gap or ground. The
+tiles, the rows and the conditions are read from All-Stars' code.
+
 **A frame.** Layer 1 is the parsed columns as All-Stars' map16 words, with the blocks
 VS. changes during play (its block buffer) put in as All-Stars' own code writes them:
 the place of a bouncing block ($27) and the used block ($FC) from its PlayerHeadCollision

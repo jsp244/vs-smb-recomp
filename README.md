@@ -83,7 +83,8 @@ smooth steps, rounded ends wherever a floor stops at a gap, steps between floors
 heights, caps on the wall's bricks where the wall stops, coral on the water levels'
 terrain, stone blocks over the floors its castles leave hanging in mid-air. It put them
 wherever the level's shape asks for them, so the port finds those places in VS.'s levels
-(its own castles too) and draws the same tiles there.
+(its own castles too) and draws the same tiles there. The ground's edges at a pit, which
+All-Stars draws as it draws each column, are drawn by the same rules.
 
 **All-Stars' music.** The same ROM brings All-Stars' music, chosen apart from the
 graphics: **Audio > Music: As the graphics / Arcade / All-Stars** (As the graphics, the
@@ -250,7 +251,10 @@ Verified (headless harness with scripted input and RAM pokes, screenshots inspec
   5-4's and 7-4's hanging floors) on every VS. area, compared cell by cell with All-Stars'
   own areas parsed by its own parser (in the world each is played in) where the level is
   SMB's: 1,140 cells as All-Stars draws them and none wrong, the rest of the difference
-  All-Stars' own slips, and no cell changed between solid and empty; 8-4's water area
+  All-Stars' own slips, and no cell changed between solid and empty; the ground's edges at
+  the pits of the overworld and the underground, by All-Stars' renderer's own rules (its
+  tiles and conditions read from its code, its state carried through a level's pipes as
+  it carries it), compared with All-Stars' own pictures of 1-1 and 1-2; 8-4's water area
   compared with All-Stars' own in the reference emulator (its stone, caps and floor), its
   coral above the pipe out (a wall in All-Stars' own) drawn as on the other water levels;
   the level ends and the objects All-Stars

@@ -971,9 +971,9 @@ static void decorate(uint8_t out[13], const uint8_t *const win[7], int type, int
 }
 
 /* ---- the area being shown ---- */
-/* an area as VS. started it: its numbers (as area_id_addr), the page its parser began on, the frame and the run
-   (power_epoch) it was in (area_start) */
-typedef struct { bool ok; uint8_t id[5], page; uint64_t frame; uint32_t seq, epoch; } visit_t;
+/* an area as VS. started it: its numbers (as area_id_addr), the page its parser began on, the state All-Stars'
+   floor edges at gaps began it in (pit_carry_in), the frame and the run (power_epoch) it was in (area_start) */
+typedef struct { bool ok; uint8_t id[5], page, pit; uint64_t frame; uint32_t seq, epoch; } visit_t;
 
 static struct {
     bool     pending;          /* InitializeArea ran in VS.: build at its first parsed column */
@@ -1409,6 +1409,8 @@ static void loop_taken(void) {
     area.loop_noted = true;
 }
 
+static uint8_t pit_carry_in(void);
+
 static void parser_column(void) {
     /* After a jump that landed between VS.'s InitializeArea and the area's first column, the hook that would have set
        area.pending ran before the jump. That column is the one at the screen's left edge, where VS.'s parser renders
@@ -1422,6 +1424,7 @@ static void parser_column(void) {
         /* a new area: replayed from its start at the next picture (VS. does not always parse an area from
            its first column: its demo goes on from the title's screen); its first column is the page it began
            on, also when a rebuild is waiting already */
+        area_start.pit = pit_carry_in();   /* while the area built is still the one before */
         area_start.ok = true;
         for (int i = 0; i < 5; i++) area_start.id[i] = ram[area_id_addr[i]];
         area_start.page = ram[RAM_PAGE];
@@ -1661,6 +1664,7 @@ void allstars_power(void) {
 }
 
 static void map_sprite_palettes(void);
+static void map_pit_edges(void);
 
 void allstars_attach(void) {
     area.ready = false; area.pending = false; area.last_col = -1; area.resync = true;   /* built at the next picture */
@@ -1671,7 +1675,7 @@ void allstars_attach(void) {
     memset(visits, 0, sizeof visits);
     memset(loops_seen, 0, sizeof loops_seen);
     memset(mt_seen_ok, 0, sizeof mt_seen_ok);
-    if (as.rom && cart.prg && cart.chr) { map_areas(); map_metatiles(); map_decorations(); map_sprite_palettes(); }
+    if (as.rom && cart.prg && cart.chr) { map_areas(); map_metatiles(); map_decorations(); map_pit_edges(); map_sprite_palettes(); }
 }
 
 /* ---- loading ---- */
@@ -2085,12 +2089,156 @@ static void map16_area(uint8_t mt, uint16_t w[4]) {
             w[k] = (uint16_t)(w[k] + (WATER_TILES_AT - WATER_TILES));
 }
 
+/* ---- the floor's ends at a gap ----
+   In a ground or underground area that is not a cloud one ($0743 clear), All-Stars' column renderer ends each
+   8-pixel column with $04:8D71 (from $03:9330). That reads the tile the column has at the top of the floor's first
+   row (row 11, $19F8,y): blank ($0024, or $10A4) is a gap, the floor's top-left tile ($0A08) is ground, anything
+   else changes nothing. At the first gap column after ground it writes the floor's right end over the column
+   before (four tiles down rows 11 and 12, through VRAM_Buffer1), at the first ground column after a gap the
+   floor's left end over that column, but not at the first nametable's first column while $43-$44 is 0 (where
+   InitializeArea puts the start page: an area entered at its first page). The parser's columns have no metatiles
+   for these, so they are drawn here, over the cells that still hold what the parser put there (a block the game
+   changes later covers them, as All-Stars' block writes do). Its state ($0ECE: in a gap; $0ECF: a gap seen since
+   the last ground) is "in a gap, none seen" after the intermission ($04:92E7) and runs on from area to area
+   through the pipes and vines of a level, unchanged in the areas it does not run in: each area keeps the state
+   it began in (visit_t.pit, pit_carry_in), and a column half's state is that of the nearest half before it that
+   is a gap or ground, or the area's own left of the column it began at. */
+enum { PIT_INIT, PIT_GROUND, PIT_GAP, PIT_UNKNOWN };   /* (in a gap, a gap seen): (1, 0), (0, 0), (1, 1) */
+static const struct { uint32_t at; uint8_t op; } pit_at[] = {
+    { 0x048D78, 0xC9 }, { 0x048D7D, 0xC9 },                                         /* CMP #: a gap's tiles */
+    { 0x048DC2, 0xC9 },                                                             /* ... ground's */
+    { 0x048DA8, 0xA9 }, { 0x048DAE, 0xA9 }, { 0x048DB4, 0xA9 }, { 0x048DBA, 0xA9 },   /* LDA #: the right end */
+    { 0x048DEF, 0xA9 }, { 0x048DF5, 0xA9 }, { 0x048DFB, 0xA9 }, { 0x048E01, 0xA9 },   /* ... the left end */
+    { 0x048D9B, 0x69 }, { 0x048DE2, 0x69 },                                         /* ADC #: their tilemap row */
+};
+#define AS_PIT_COND  at(0x0392F6)   /* the column renderer: LDA $0743 / ... / LDA $5C / ... / CMP #3 / ... */
+#define AS_PIT_CALL  at(0x039330)   /* ... JSL $04:8D71 */
+#define AS_PIT_EDGES at(0x048D71)
+#define VS_DISPLAY_INTER 0x8889     /* VS.'s DisplayIntermediate */
+static uint16_t pit_gap[2], pit_ground, pit_end[2][4];   /* pit_end[0] the left end, [1] the right end: rows 11, 12 */
+static int pit_row = -1;                                 /* the floor's first row (11); -1: not drawn */
+static uint8_t vs_game_over_mode;
+
+static void map_pit_edges(void) {
+    pit_row = -1;
+    uint32_t c = AS_PIT_CALL;
+    if (rom8(c) != 0x22 || (uint32_t)(rom8(c + 1) | rom8(c + 2) << 8 | rom8(c + 3) << 16) != AS_PIT_EDGES) return;
+    /* its conditions: CloudTypeOverride clear, AreaType ($5C) neither water (0) nor a castle (3) */
+    static const uint8_t cond[] = { 0xAD, 0x43, 0x07, 0x29, 0xFF, 0x00, 0xD0, 0x36, 0xA5, 0x5C, 0x29, 0xFF, 0x00,
+                                    0xF0, 0x2F, 0xC9, 0x03, 0x00, 0xF0, 0x2A };
+    for (size_t i = 0; i < sizeof cond; i++) if (rom8(AS_PIT_COND + (uint32_t)i) != cond[i]) return;
+    uint16_t v[sizeof pit_at / sizeof pit_at[0]];
+    for (size_t i = 0; i < sizeof pit_at / sizeof pit_at[0]; i++) {
+        uint32_t a = at(pit_at[i].at);
+        if (rom8(a - 1) != pit_at[i].op) return;
+        v[i] = rom16(a);
+    }
+    int ty = v[11] >> 5;   /* the ends' first tile row ($0340: 26, metatile row 11) */
+    if (v[11] != v[12] || (v[11] & 31) || (ty & 1) || ty / 2 - 2 < 0 || ty / 2 - 2 > 11) return;
+    /* VS.'s DisplayIntermediate, which pit_carry_in follows: LDA OperMode / BEQ / CMP #game over / BEQ /
+       LDA AltEntranceControl / BNE / LDY AreaType / CPY #3 / BEQ / LDA DisableIntermediate / BNE (0: any byte) */
+    static const uint8_t inter[] = { 0xAD, 0x70, 0x07, 0xF0, 0, 0xC9, 0, 0xF0, 0, 0xAD, 0x52, 0x07, 0xD0, 0,
+                                     0xAC, 0x4E, 0x07, 0xC0, 0x03, 0xF0, 0, 0xAD, 0x69, 0x07, 0xD0 };
+    for (size_t i = 0; i < sizeof inter; i++)
+        if (inter[i] && cart.prg[VS_DISPLAY_INTER - 0x8000 + i] != inter[i]) return;
+    vs_game_over_mode = cart.prg[VS_DISPLAY_INTER - 0x8000 + 6];
+    pit_gap[0] = v[0]; pit_gap[1] = v[1]; pit_ground = v[2];
+    for (int k = 0; k < 4; k++) { pit_end[1][k] = v[3 + k]; pit_end[0][k] = v[7 + k]; }
+    pit_row = ty / 2 - 2;
+}
+
+/* whether All-Stars draws them in the area built: a ground or underground one, not of clouds */
+static bool pit_area(void) {
+    int t = area.id[3] & 3;
+    return pit_row >= 0 && (t == 1 || t == 2) && !sb->wram[0x0743];
+}
+
+/* the top tile at the floor's first row of a column half (0 left, 1 right) with metatile mt there: 2 a gap,
+   1 ground, 0 neither */
+static int pit_kind(uint8_t mt, int half) {
+    uint16_t w[4];
+    map16_area(mt, w);
+    uint16_t t = w[half ? 2 : 0];
+    return t == pit_gap[0] || t == pit_gap[1] ? 2 : t == pit_ground;
+}
+
+/* the metatile at the floor's first row of column c (page * 16 + column) of the area built: -1 not held,
+   -2 left of the column it began at */
+typedef int (*pit_cells_f)(int c);
+static int pit_cell(int c) {
+    if (area.start.ok && c < area.start.page * 16) return -2;
+    int s = c & 31;
+    return area.have[s] && area.parsed[s] && area.world_col[s] == c ? area.smas[s][pit_row] : -1;
+}
+
+/* the state before half `half` of column c: that of the nearest half before it that is a gap or ground */
+static int pit_state(pit_cells_f cell, int c, int half, int in) {
+    for (int n = 0; n < 64; n++) {
+        if (half) half = 0; else { c--; half = 1; }
+        int m = cell(c);
+        if (m == -2) return in;
+        if (m < 0) return PIT_UNKNOWN;
+        int k = pit_kind((uint8_t)m, half);
+        if (k) return k == 2 ? PIT_GAP : PIT_GROUND;
+    }
+    return PIT_UNKNOWN;
+}
+
+/* the ends All-Stars draws over column c's halves: e[h] 0 none, 1 the left end, 2 the right end (written after,
+   so it wins). first_page: the area began at its first page, $43-$44 is 0 */
+static void pit_ends(pit_cells_f cell, int c, int in, bool first_page, uint8_t e[2]) {
+    e[0] = e[1] = 0;
+    int m = cell(c);
+    if (m < 0) return;
+    for (int h = 0; h < 2; h++) {
+        if (pit_kind((uint8_t)m, h) == 1 && pit_state(cell, c, h, in) == PIT_GAP && !(first_page && !h && !(c & 31)))
+            e[h] = 1;
+        int nm = h ? cell(c + 1) : m;   /* the half after this one: c's right half, or c + 1's left half */
+        if (nm >= 0 && pit_kind((uint8_t)nm, !h) == 2 && pit_state(cell, c + h, !h, in) == PIT_GROUND) e[h] = 2;
+    }
+}
+
+/* the ends over a cell's tilemap words (UL, LL, UR, LR); row: the cell's row less pit_row, 0 or 1 */
+static void pit_draw(uint16_t w[4], const uint8_t e[2], int row) {
+    for (int h = 0; h < 2; h++)
+        if (e[h]) { w[h * 2] = pit_end[e[h] - 1][row * 2]; w[h * 2 + 1] = pit_end[e[h] - 1][row * 2 + 1]; }
+}
+
+/* The state an area starts in, at its first column (the area built is still the one before): VS.'s
+   DisplayIntermediate shows the intermission, where All-Stars sets it, unless OperMode is the title's (0) or
+   the game over's, AltEntranceControl is set (a pipe's or a vine's entry) or, but for a castle,
+   DisableIntermediate is; none of them changes between it and the first column. Else the state the area before
+   left: after its last column where All-Stars drew the ends there, else the one it began in. */
+static uint8_t pit_carry_in(void) {
+    if (pit_row < 0) return PIT_INIT;
+    uint8_t mode = ram[0x0770];
+    if (mode && mode != vs_game_over_mode && !ram[0x0752] && ((ram[RAM_AREA_TYPE] & 3) == 3 || !ram[0x0769]))
+        return PIT_INIT;
+    if (!area.ready || area.resync) return PIT_INIT;   /* the area before is not known */
+    uint8_t in = area.start.ok ? area.start.pit : PIT_INIT;
+    if (!pit_area()) return in;
+    int last = INT_MIN;
+    for (int s = 0; s < 32; s++) if (area.have[s] && area.parsed[s] && area.world_col[s] > last) last = area.world_col[s];
+    if (last == INT_MIN) return in;
+    int st = pit_state(pit_cell, last + 1, 0, in);
+    return st == PIT_UNKNOWN ? PIT_INIT : (uint8_t)st;
+}
+
 static void write_bg1(void) {
     uint8_t *v = sb->ppu.vram;
-    for (int col = 0; col < 32; col++)
+    bool pits = pit_area(), first_page = area.start.ok && !area.start.page;
+    int in = area.start.ok ? area.start.pit : PIT_INIT;
+    for (int col = 0; col < 32; col++) {
+        uint8_t e[2] = { 0, 0 };
+        if (pits && area.parsed[col]) pit_ends(pit_cell, area.world_col[col], in, first_page, e);
         for (int row = -2; row < 14; row++) {
             uint16_t w[4] = { 0x0024, 0x0024, 0x0024, 0x0024 };   /* tile $24 is blank in All-Stars too */
-            if (row >= 0 && row < 13) map16_area(cell_metatile(col, row), w);
+            if (row >= 0 && row < 13) {
+                uint8_t m = cell_metatile(col, row);
+                map16_area(m, w);
+                if ((e[0] || e[1]) && row >= pit_row && row < pit_row + 2 && m == area.smas[col][row])
+                    pit_draw(w, e, row - pit_row);
+            }
             int tx = col * 2, ty = (row + 2) * 2;
             uint32_t base = (uint32_t)((tx >> 5) * 0x400 + ty * 32 + (tx & 31));
             uint32_t at[4] = { base, base + 32, base + 1, base + 33 };
@@ -2099,6 +2247,7 @@ static void write_bg1(void) {
                 v[a] = (uint8_t)w[k]; v[a + 1] = (uint8_t)(w[k] >> 8);
             }
         }
+    }
 }
 
 /* The page before a part-way start. An area entered at its halfway page or a pipe's entrance page is
@@ -2187,6 +2336,14 @@ static bool jump_fill_page(int *start) {
     return true;
 }
 
+/* pit_cell for the page before: its columns, then the start page's as the area has them; the floor's ends are drawn
+   on it as All-Stars would had the area begun there, in the state it began in */
+static int pit_cell_before(int c) {
+    int k = c - before.page * 16;
+    if (k < 0) return -2;
+    return k < 16 ? before.smas[k][pit_row] : pit_cell(c);
+}
+
 /* the page before into layer 1 for the band's world pixels [b0, b1), when the band shows it: returns its
    start page's world pixel (INT_MIN: the band shows no such page) and in *shown which of its columns
    the band may show */
@@ -2211,9 +2368,12 @@ static int write_bg1_before(int b0, int b1, unsigned *shown) {
            drawn beyond the window, nor one past it, parsed in a timeline the machine has left: a state
            loaded before the area is rebuilt) */
         if (area.have[s] && area.world_col[s] != c && area.world_col[s] < front) continue;
+        uint8_t e[2] = { 0, 0 };
+        if (pit_area()) pit_ends(pit_cell_before, c, area.start.ok ? area.start.pit : PIT_INIT, !before.page, e);
         for (int row = 0; row < 13; row++) {
             uint16_t w[4];
             map16_area(before.smas[k][row], w);
+            if ((e[0] || e[1]) && row >= pit_row && row < pit_row + 2) pit_draw(w, e, row - pit_row);
             int tx = s * 2, ty = (row + 2) * 2;
             uint32_t base = (uint32_t)((tx >> 5) * 0x400 + ty * 32 + (tx & 31));
             uint32_t at[4] = { base, base + 32, base + 1, base + 33 };
